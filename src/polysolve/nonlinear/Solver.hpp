@@ -82,7 +82,11 @@ namespace polysolve::nonlinear
 
         /// @brief Set a filter applied to every computed update direction
         ///        before it is vetted and line-searched (e.g. one-sided
-        ///        projection of constraint-violating components).
+        ///        projection of constraint-violating components). The filter
+        ///        does not redefine the objective or its gradient: descent and
+        ///        slope tolerances use gradient.dot(filtered_direction).
+        ///        This callback alone does not define a constrained merit
+        ///        function or a constrained-stationarity stopping criterion.
         void set_direction_filter(std::function<void(const TVector &, TVector &)> filter) { m_direction_filter = filter; }
 
         /// @brief If true the solver will not throw an error if the maximum number of iterations is reached
@@ -145,7 +149,7 @@ namespace polysolve::nonlinear
 
         /// @brief Logger to use
         spdlog::logger &m_logger;
-        
+
         NormType m_norm_type;
 
         // ====================================================================

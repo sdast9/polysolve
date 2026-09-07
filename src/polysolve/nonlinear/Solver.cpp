@@ -393,19 +393,11 @@ namespace polysolve::nonlinear
                 continue;
             }
 
-            // With a direction filter installed, descent must be measured on
-            // the constrained manifold: project the steepest-descent
-            // direction through the same filter and test against that.
-            // Otherwise a correctly filtered direction is rejected against
-            // gradient components that live in the removed subspace.
-            if (m_direction_filter)
-            {
-                TVector neg_grad = -grad;
-                m_direction_filter(x, neg_grad);
-                m_current.xDeltaDotGrad = -delta_x.dot(neg_grad);
-            }
-            else
-                m_current.xDeltaDotGrad = delta_x.dot(grad);
+            // The filter changes the trial direction, not the objective.
+            // Along x + alpha * delta_x the derivative is grad.dot(delta_x),
+            // including for nonlinear/one-sided filters. Filtering -grad as
+            // well generally gives a different quantity and can hide ascent.
+            m_current.xDeltaDotGrad = delta_x.dot(grad);
 
             if (m_stop_rescaled.newtonDecrement > 0)
             {
