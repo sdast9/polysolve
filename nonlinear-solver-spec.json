@@ -659,9 +659,10 @@
         "default": null,
         "type": "object",
         "optional": [
-            "c"
+            "c",
+            "roundoff_tolerance"
         ],
-        "doc": "Options for Armijo."
+        "doc": "Options for Armijo (also used by RobustArmijo)."
     },
     {
         "pointer": "/line_search/Armijo/c",
@@ -669,6 +670,13 @@
         "type": "float",
         "min_value": 0,
         "doc": "Armijo c parameter."
+    },
+    {
+        "pointer": "/line_search/Armijo/roundoff_tolerance",
+        "default": 2.220446049250313e-16,
+        "type": "float",
+        "min_value": 0,
+        "doc": "Roundoff floor of the energy, epsilon in |E(x+a dx) - E(x)| <= epsilon (1 + |E(x)|). When the Armijo (and RobustArmijo) energy test fails but the change is within this floor, or the gradient is already below use_grad_norm_tol, the step is accepted iff the gradient norm decreases. 0 disables the floor (use_grad_norm_tol still applies)."
     },
     {
         "pointer": "/line_search/RobustArmijo",

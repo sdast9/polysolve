@@ -752,3 +752,139 @@ TEST_CASE("iteration-callback", "[solver][callback]")
     problem.gradient(x, g);
     CHECK(g.norm() > 1e-7);
 }
+
+// f = ½ (a x₀² + x₁²) whose *measured* energy cannot fall below `floor`,
+// as when summation roundoff hides the last decrements of a real energy.
+// Gradient and Hessian are exact. Models the step-1 stall reproduced in
+// PolyFEM (energy pinned near 1e-14 while ‖∇f‖ was still 40× the tolerance).
+class FlooredQuadratic : public Problem
+{
+public:
+    FlooredQuadratic(const double a, const double floor) : a(a), floor(floor) {}
+
+    double value(const TVector &x) override
+    {
+        return std::max(0.5 * (a * x(0) * x(0) + x(1) * x(1)), floor);
+    }
+    void gradient(const TVector &x, TVector &gradv) override
+    {
+        gradv.resize(2);
+        gradv(0) = a * x(0);
+        gradv(1) = x(1);
+    }
+    void hessian(const TVector &x, THessian &hessian) override
+    {
+        hessian.resize(2, 2);
+        hessian.setIdentity();
+        hessian.coeffRef(0, 0) = a;
+    }
+    void hessian(const TVector &x, Eigen::MatrixXd &hessian) override
+    {
+        hessian.setIdentity(2, 2);
+        hessian(0, 0) = a;
+    }
+
+    double a, floor;
+};
+
+TEST_CASE("line-search-energy-roundoff", "[solver][line_search]")
+{
+    static std::shared_ptr<spdlog::logger> logger =
+        spdlog::stdout_color_mt("roundoff-test");
+    logger->set_level(spdlog::level::warn);
+
+    json linear_solver_params;
+    linear_solver_params["solver"] = "Eigen::SimplicialLDLT";
+
+    const std::string method = GENERATE("Armijo", "RobustArmijo");
+
+    auto make_params = [&](const double use_grad_norm_tol, const double roundoff_tolerance) {
+        json p;
+        p["solver"] = "Newton";
+        p["line_search"]["method"] = method;
+        p["line_search"]["use_grad_norm_tol"] = use_grad_norm_tol;
+        p["line_search"]["Armijo"]["roundoff_tolerance"] = roundoff_tolerance;
+        p["max_iterations"] = 50;
+        p["grad_norm_tol"] = 1e-10;
+        p["rel_grad_norm_tol"] = 0;
+        return p;
+    };
+
+    // Start where the exact decrease (1e-14) is below the measured floor.
+    FlooredQuadratic problem(1, 2e-14);
+    TestProblem::TVector x0(2);
+    x0 << 1e-7, 1e-7;
+
+    SECTION("use_grad_norm switch rescues the stall")
+    {
+        auto solver = Solver::create(make_params(1e-6, 0), linear_solver_params, 1, *logger);
+        int iterations = 0;
+        bool full_steps = true;
+        solver->set_iteration_callback([&](const Criteria &crit) -> bool {
+            ++iterations;
+            full_steps = full_steps && crit.alpha == 1;
+            return false;
+        });
+        TestProblem::TVector x = x0;
+        REQUIRE_NOTHROW(solver->minimize(problem, x));
+        CHECK(solver->status() == Status::GradNormTolerance);
+        CHECK(x.norm() < 1e-10);
+        // The exact Newton step is accepted at α=1 on the gradient criterion.
+        CHECK(full_steps);
+        CHECK(iterations <= 2);
+    }
+
+    SECTION("roundoff floor alone rescues the stall")
+    {
+        auto solver = Solver::create(make_params(0, 2.220446049250313e-16), linear_solver_params, 1, *logger);
+        TestProblem::TVector x = x0;
+        REQUIRE_NOTHROW(solver->minimize(problem, x));
+        CHECK(solver->status() == Status::GradNormTolerance);
+        CHECK(x.norm() < 1e-10);
+    }
+
+    SECTION("both disabled reproduces the pre-fix behavior")
+    {
+        auto solver = Solver::create(make_params(0, 0), linear_solver_params, 1, *logger);
+        TestProblem::TVector x = x0;
+        if (method == "Armijo")
+        {
+            // Every step looks like a non-decrease: the search collapses.
+            REQUIRE_THROWS(solver->minimize(problem, x));
+        }
+        else
+        {
+            // RobustArmijo's gradient-integral estimate cancels exactly on
+            // a full Newton step, so it only ever accepts α=1/2 here.
+            bool halved = true;
+            solver->set_iteration_callback([&](const Criteria &crit) -> bool {
+                halved = halved && crit.alpha == 0.5;
+                return false;
+            });
+            REQUIRE_NOTHROW(solver->minimize(problem, x));
+            CHECK(halved);
+        }
+    }
+
+    SECTION("the fallback does not mask ascent")
+    {
+        // Gradient descent on an ill-conditioned floored quadratic: α ≥ 1/32
+        // overshoots and *increases* ‖∇f‖ while the energy still reads
+        // "unchanged". The fallback must reject those and accept 1/64.
+        FlooredQuadratic stiff(100, 1e-8);
+        json p = make_params(1e100, 2.220446049250313e-16); // always in the roundoff regime
+        p["solver"] = "GradientDescent";
+        p["max_iterations"] = 5;
+        p["allow_out_of_iterations"] = true;
+        auto solver = Solver::create(p, linear_solver_params, 1, *logger);
+        double max_alpha = 0;
+        solver->set_iteration_callback([&](const Criteria &crit) -> bool {
+            max_alpha = std::max(max_alpha, crit.alpha);
+            return false;
+        });
+        TestProblem::TVector x(2);
+        x << 1e-5, 1e-5;
+        REQUIRE_NOTHROW(solver->minimize(stiff, x));
+        CHECK(max_alpha == Approx(1. / 64));
+    }
+}
