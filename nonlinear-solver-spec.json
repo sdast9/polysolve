@@ -676,7 +676,7 @@
         "default": 2.220446049250313e-16,
         "type": "float",
         "min_value": 0,
-        "doc": "Roundoff floor of the energy, epsilon in |E(x+a dx) - E(x)| <= epsilon (1 + |E(x)|). When the Armijo (and RobustArmijo) energy test fails but the change is within this floor, or the gradient is already below use_grad_norm_tol, the step is accepted iff the gradient norm decreases. 0 disables the floor (use_grad_norm_tol still applies)."
+        "doc": "Energy-change bound for the Armijo/RobustArmijo gradient-norm fallback: |E(x+a dx) - E(x)| <= epsilon (max(1, S) + |E(x)|). S is the problem characteristic energy scale when the gradient is below use_grad_norm_tol, and 1 otherwise. If the energy tests fail, the fallback requires this finite bound and a smaller finite gradient norm. With epsilon 0 the small-gradient regime permits equal energy only; disabling both gates disables the fallback."
     },
     {
         "pointer": "/line_search/RobustArmijo",

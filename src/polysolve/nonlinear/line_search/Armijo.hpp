@@ -32,18 +32,19 @@ namespace polysolve::nonlinear::line_search
 
         /// @brief Whether the energy cannot resolve the Armijo decrease.
         ///
-        /// True when the caller flagged use_grad_norm (‖∇f‖ already below
-        /// use_grad_norm_tol times the problem's gradient scale, the switch
-        /// Backtracking honors) or when the measured change is within
-        /// roundoff of the energy value itself, |ΔE| ≤ ε(1 + |E|).
+        /// Requires |ΔE| <= ε (max(1, S) + |E|), where S is the problem's
+        /// characteristic energy scale only when use_grad_norm is flagged,
+        /// and 1 otherwise. With ε=0, the flagged regime permits equal energy
+        /// only; disabling both gates disables this fallback.
         bool energy_at_roundoff(
+            const Problem &objFunc,
             const bool use_grad_norm,
             const double old_energy,
             const double new_energy) const;
 
         /// @brief Fallback acceptance when energy_at_roundoff: the gradient
-        /// norm must decrease. Never accepts a step along which the gradient
-        /// grows, so ascent that the energy cannot see is still rejected.
+        /// norm must decrease. This is a progress measure within the energy
+        /// bound, not a proof of descent for a nonconvex objective.
         bool gradient_decreased(
             Problem &objFunc,
             const TVector &old_grad,
@@ -51,6 +52,6 @@ namespace polysolve::nonlinear::line_search
 
         double c;
         double armijo_criteria;    ///< cached value: c * delta_x.dot(old_grad)
-        double roundoff_tolerance; ///< ε in |ΔE| ≤ ε(1 + |E|); 0 disables the roundoff regime
+        double roundoff_tolerance; ///< ε in the energy-change bound; 0 permits only flagged equal-energy fallback
     };
 } // namespace polysolve::nonlinear::line_search

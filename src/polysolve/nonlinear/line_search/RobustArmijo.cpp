@@ -45,7 +45,7 @@ namespace polysolve::nonlinear::line_search
         // Neither the energy nor its gradient-integral estimate can resolve
         // the decrease (e.g. a full Newton step, where the estimate's error
         // term cancels its decrease exactly); fall back to the gradient norm.
-        if (this->energy_at_roundoff(use_grad_norm, old_energy, new_energy))
+        if (this->energy_at_roundoff(objFunc, use_grad_norm, old_energy, new_energy))
             return this->gradient_decreased(objFunc, old_grad, new_x);
 
         return false;

@@ -4,6 +4,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cmath>
 
 namespace polysolve::nonlinear::line_search
@@ -38,21 +39,34 @@ namespace polysolve::nonlinear::line_search
 
         // The Armijo decrease is below what the energy evaluation can
         // resolve; measure progress on the gradient instead.
-        if (energy_at_roundoff(use_grad_norm, old_energy, new_energy))
+        if (energy_at_roundoff(objFunc, use_grad_norm, old_energy, new_energy))
             return gradient_decreased(objFunc, old_grad, new_x);
 
         return false;
     }
 
     bool Armijo::energy_at_roundoff(
+        const Problem &objFunc,
         const bool use_grad_norm,
         const double old_energy,
         const double new_energy) const
     {
-        if (use_grad_norm)
-            return true;
-        return roundoff_tolerance > 0
-               && std::abs(new_energy - old_energy) <= roundoff_tolerance * (1 + std::abs(old_energy));
+        if (!use_grad_norm && !(roundoff_tolerance > 0))
+            return false;
+
+        // A small gradient alone does not make an uphill step safe: it can
+        // decrease on the way to a local maximum. Keep a finite energy bound.
+        // Near stationarity, cancellation can leave a tiny total energy even
+        // though the terms being summed have the problem's characteristic
+        // energy scale. Use that existing scale only for the small-gradient
+        // regime; retain the energy-value bound elsewhere.
+        const double energy_scale = use_grad_norm ? objFunc.energy_norm_rescaling(norm_type) : 1.;
+        if (!std::isfinite(energy_scale) || !(energy_scale > 0))
+            return false;
+        const double bound = roundoff_tolerance * std::max(1., energy_scale)
+                             + roundoff_tolerance * std::abs(old_energy);
+        return std::isfinite(bound)
+               && std::abs(new_energy - old_energy) <= bound;
     }
 
     bool Armijo::gradient_decreased(

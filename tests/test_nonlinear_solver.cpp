@@ -3,6 +3,8 @@
 #include <polysolve/nonlinear/Solver.hpp>
 #include <polysolve/nonlinear/BoxConstraintSolver.hpp>
 #include <polysolve/nonlinear/Problem.hpp>
+#include <polysolve/nonlinear/line_search/LineSearch.hpp>
+#include <limits>
 #include <polysolve/Utils.hpp>
 #include <polysolve/Types.hpp>
 #include <polysolve/linear/Solver.hpp>
@@ -866,7 +868,7 @@ TEST_CASE("line-search-energy-roundoff", "[solver][line_search]")
         }
     }
 
-    SECTION("the fallback does not mask ascent")
+    SECTION("the fallback rejects a growing gradient at equal measured energy")
     {
         // Gradient descent on an ill-conditioned floored quadratic: α ≥ 1/32
         // overshoots and *increases* ‖∇f‖ while the energy still reads
@@ -886,5 +888,91 @@ TEST_CASE("line-search-energy-roundoff", "[solver][line_search]")
         x << 1e-5, 1e-5;
         REQUIRE_NOTHROW(solver->minimize(stiff, x));
         CHECK(max_alpha == Approx(1. / 64));
+    }
+}
+
+// Smooth and bounded below. A small gradient can fall to zero at a strict
+// local maximum, so gradient-norm reduction alone cannot justify a step.
+class SmallNonconvex : public Problem
+{
+public:
+    double value(const TVector &x) override
+    {
+        const double t = x[0];
+        return 1e-7 * (.5 * t * t - t * t * t / 3 + .01 * t * t * (t - 1) * (t - 1));
+    }
+    void gradient(const TVector &x, TVector &g) override
+    {
+        const double t = x[0];
+        g = TVector::Constant(1, 1e-7 * (t - t * t + .01 * (4 * t * t * t - 6 * t * t + 2 * t)));
+    }
+    void hessian(const TVector &x, THessian &h) override
+    {
+        const double t = x[0];
+        h.resize(1, 1);
+        h.coeffRef(0, 0) = 1e-7 * (1 - 2 * t + .01 * (12 * t * t - 12 * t + 2));
+    }
+};
+
+TEST_CASE("line-search-small-gradient-keeps-energy-bound", "[solver][line_search]")
+{
+    using TVector = Problem::TVector;
+    static auto logger = spdlog::stdout_color_mt("bounded-roundoff-test");
+    logger->set_level(spdlog::level::warn);
+    const std::string method = GENERATE("Armijo", "RobustArmijo");
+    const double eps = std::numeric_limits<double>::epsilon();
+    json p = {{"line_search", {{"method", method}, {"min_step_size", 1e-12}, {"max_step_size_iter", 100}, {"min_step_size_final", 1e-12}, {"max_step_size_iter_final", 100}, {"default_init_step_size", 1.}, {"step_ratio", .5}, {"Armijo", {{"c", 1e-4}, {"roundoff_tolerance", eps}}}, {"RobustArmijo", {{"delta_relative_tolerance", 1e-10}}}}}};
+    auto ls = line_search::LineSearch::create(p, *logger);
+    ls->set_is_final_strategy(true);
+    ls->reset_times();
+    ls->use_grad_norm_tol = 1e-6;
+
+    SECTION("rejects a full step to a nonconvex local maximum")
+    {
+        SmallNonconvex f;
+        TVector x = TVector::Constant(1, -.1), step = TVector::Constant(1, 1.1), g, g_max;
+        const TVector maximum = TVector::Ones(1);
+        f.gradient(x, g);
+        f.gradient(maximum, g_max);
+        CHECK(g.dot(step) < 0);
+        CHECK(g.norm() < ls->use_grad_norm_tol);
+        CHECK(g_max.norm() == 0);
+        CHECK(f.value(maximum) > f.value(x) + 1e6 * eps);
+        const double alpha = ls->line_search(x, step, f);
+        CHECK(alpha == Approx(.125));
+        CHECK(f.value(x + alpha * step) < f.value(x));
+    }
+
+    SECTION("characteristic energy scale accommodates bounded cancellation noise")
+    {
+        class CancellationQuadratic : public FlooredQuadratic
+        {
+        public:
+            CancellationQuadratic() : FlooredQuadratic(1, 2e-14) {}
+            double scale = 90000.; // the unit-cube PolyFEM characteristic scale
+            double energy_norm_rescaling(const NormType) const override { return scale; }
+            double value(const TVector &x) override
+            {
+                // Explicit synthetic evaluation error (up to 1e-13), not
+                // the exact objective. Gradient/Hessian remain exact.
+                return FlooredQuadratic::value(x) + 1e-13 * (1 - std::min(1., std::abs(x[0]) / 1e-7));
+            }
+        } f;
+        const TVector x = TVector::Constant(2, 1e-7);
+        TVector step = -x;
+        CHECK(f.value(x + step) - f.value(x) > eps);
+        CHECK(f.value(x + step) - f.value(x) < eps * f.scale);
+        CHECK(ls->line_search(x, step, f) == 1.);
+        for (const double scale : {1., 0., std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()})
+        {
+            CAPTURE(scale);
+            f.scale = scale;
+            step = -x;
+            // Invalid scales fail closed; a smaller valid scale tightens
+            // the bound. The gradient-integral estimate may accept a
+            // partial step in RobustArmijo independently of this fallback.
+            const double alpha = ls->line_search(x, step, f);
+            CHECK((std::isnan(alpha) || (alpha > 0 && alpha < 1.)));
+        }
     }
 }
