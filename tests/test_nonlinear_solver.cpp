@@ -5,6 +5,7 @@
 #include <polysolve/nonlinear/Problem.hpp>
 #include <polysolve/nonlinear/line_search/LineSearch.hpp>
 #include <limits>
+#include <map>
 #include <polysolve/Utils.hpp>
 #include <polysolve/Types.hpp>
 #include <polysolve/linear/Solver.hpp>
@@ -277,6 +278,10 @@ void test_solvers(const std::vector<std::string> &solvers, const int iters, cons
     static std::shared_ptr<spdlog::logger> logger = spdlog::stdout_color_mt("test-logger");
     logger->set_level(spdlog::level::info);
     TestProblem::TVector g;
+    // Which solves a fallback strategy finished, reported rather than hidden:
+    // a converged solve here does not say the configured strategy converged.
+    std::map<std::string, int> escalated; // solver/line search/problem -> solves
+    int converged = 0, abandoned = 0, escalations = 0;
     for (auto &prob : problems)
     {
         for (auto solver_name : solvers)
@@ -327,6 +332,12 @@ void test_solvers(const std::vector<std::string> &solvers, const int iters, cons
                         CHECK(err < 1e-7);
                         if (err >= 1e-7)
                             break;
+                        ++converged;
+                        if (!solver->info()["strategy_transition_counts"].empty())
+                        {
+                            ++escalated[solver_name + "/" + ls + "/" + prob->name()];
+                            ++escalations;
+                        }
                     }
                     catch (const std::exception &)
                     {
@@ -336,7 +347,10 @@ void test_solvers(const std::vector<std::string> &solvers, const int iters, cons
                             CHECK(false);
                         }
                         else
+                        {
+                            ++abandoned;
                             break;
+                        }
                     }
 
                     x.setRandom();
@@ -355,6 +369,11 @@ void test_solvers(const std::vector<std::string> &solvers, const int iters, cons
             }
         }
     }
+    std::string report = fmt::format("{} converged solves, {} abandoned on an exception{}; {} escalated to a fallback strategy on the way",
+                                     converged, abandoned, exceptions_are_errors ? " (none allowed)" : " (permitted here)", escalations);
+    for (const auto &[combination, count] : escalated)
+        report += fmt::format("\n  {} x{}", combination, count);
+    WARN(report);
 }
 
 void test_solvers_gradient_fd(const bool full_fd)
@@ -421,7 +440,11 @@ void test_solvers_gradient_fd(const bool full_fd)
     }
 }
 
-TEST_CASE("nonlinear", "[solver]")
+// A permissive stress test, deliberately: random starts over wide boxes, and an
+// exception ends a combination without failing it. Its WARN line reports how
+// many solves were abandoned and which finished on a fallback strategy. The
+// deterministic BFGS regressions are "bfgs-deterministic-*".
+TEST_CASE("nonlinear-stress-permissive", "[solver][stress]")
 {
     test_solvers(Solver::available_solvers(), 1000, false);
     // test_solvers({"L-BFGS"}, 1000, false);
@@ -490,6 +513,8 @@ TEST_CASE("nonlinear-gradient-fd", "[solver]")
     test_solvers_gradient_fd(true);
 }
 
+// Exceptions fail here, but the string-configured fallback may finish a solve;
+// the WARN line lists every solve that needed it.
 TEST_CASE("nonlinear-easier", "[solver]")
 {
     test_solvers(Solver::available_solvers(), 5000, true);
@@ -974,5 +999,213 @@ TEST_CASE("line-search-small-gradient-keeps-energy-bound", "[solver][line_search
             const double alpha = ls->line_search(x, step, f);
             CHECK((std::isnan(alpha) || (alpha > 0 && alpha < 1.)));
         }
+    }
+}
+
+// ===========================================================================
+// Deterministic quasi-Newton regressions (BFGS audit stage 5)
+//
+// The "nonlinear" matrix above is a permissive stress test: random starts, and
+// an exception ends a combination without failing it. "nonlinear-easier"
+// fails on exceptions but lets the string-configured fallback (GradientDescent)
+// finish the solve. Neither says whether a BFGS strategy converged by itself.
+// Here every start is fixed, the solver is the strategy alone, an exception is
+// a failure, and the strategy that finished is checked.
+// ===========================================================================
+
+namespace
+{
+    struct DeterministicCase
+    {
+        std::shared_ptr<TestProblem> problem;
+        std::vector<TestProblem::TVector> starts;
+    };
+
+    std::vector<DeterministicCase> deterministic_cases()
+    {
+        const auto vec = [](std::initializer_list<double> v) {
+            TestProblem::TVector x(v.size());
+            int i = 0;
+            for (const double e : v)
+                x[i++] = e;
+            return x;
+        };
+        TestProblem::TVector rosenbrock_classic(10), alternating(10);
+        for (int i = 0; i < 10; ++i)
+        {
+            rosenbrock_classic[i] = i % 2 == 0 ? -1.2 : 1.;
+            alternating[i] = i % 2 == 0 ? 4. : -3.;
+        }
+        return {
+            {std::make_shared<QuadraticProblem>(), {vec({0, 0, 0}), vec({5, -4, 2})}},
+            {std::make_shared<Sphere>(), {TestProblem::TVector::Constant(10, 3.), alternating}},
+            {std::make_shared<Beale>(), {vec({1, 1}), vec({0, 0})}},
+            {std::make_shared<Rosenbrock>(), {rosenbrock_classic, TestProblem::TVector::Zero(10)}}};
+    }
+} // namespace
+
+TEST_CASE("bfgs-deterministic-matrix", "[solver][bfgs][deterministic]")
+{
+    static std::shared_ptr<spdlog::logger> logger = spdlog::stdout_color_mt("bfgs-deterministic");
+    logger->set_level(spdlog::level::off);
+
+    for (const std::string strategy : {"BFGS", "L-BFGS"})
+    {
+        for (const std::string ls : {"Armijo", "RobustArmijo", "Backtracking", "Wolfe"})
+        {
+            for (const auto &c : deterministic_cases())
+            {
+                for (size_t s = 0; s < c.starts.size(); ++s)
+                {
+                    INFO("strategy " << strategy << ", line search " << ls << ", problem " << c.problem->name() << ", start " << s);
+                    json params;
+                    params["solver"] = json::array({json{{"type", strategy}}});
+                    params["line_search"]["method"] = ls;
+                    params["grad_norm_tol"] = 1e-8;
+                    params["rel_grad_norm_tol"] = 0;
+                    params["max_iterations"] = 5000;
+                    json linear = {{"solver", "Eigen::LDLT"}};
+                    auto solver = Solver::create(params, linear, 1, *logger);
+
+                    TestProblem::TVector x = c.starts[s];
+                    bool threw = false;
+                    try
+                    {
+                        solver->minimize(*c.problem, x);
+                    }
+                    catch (const std::exception &e)
+                    {
+                        threw = true;
+                        UNSCOPED_INFO("exception: " << e.what());
+                    }
+                    CHECK_FALSE(threw);
+                    if (threw)
+                        continue;
+                    CHECK(solver->status() == Status::GradNormTolerance);
+                    CHECK(solver->info()["active_strategy"] == strategy);
+                    CHECK(solver->info()["strategy_transition_counts"].empty());
+                    double err = std::numeric_limits<double>::max();
+                    for (const auto &sol : c.problem->solutions())
+                        err = std::min(err, (x - sol).norm());
+                    CHECK(err < 1e-6);
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("bfgs-deterministic-chain-records-the-finishing-strategy", "[solver][bfgs][deterministic]")
+{
+    // The usual string form appends GradientDescent as a fallback, so a
+    // converged solve does not by itself say the quasi-Newton strategy stayed
+    // valid (the audit's Rosenbrock observation). From the fixed starts it must
+    // converge without an exception, and the strategy that finished and every
+    // escalation are read back from the solver info.
+    static std::shared_ptr<spdlog::logger> logger = spdlog::stdout_color_mt("bfgs-deterministic-chain");
+    logger->set_level(spdlog::level::off);
+
+    for (const std::string strategy : {"BFGS", "L-BFGS"})
+    {
+        for (const std::string ls : {"Armijo", "RobustArmijo", "Backtracking", "Wolfe"})
+        {
+            for (const auto &c : deterministic_cases())
+            {
+                for (size_t s = 0; s < c.starts.size(); ++s)
+                {
+                    INFO("strategy " << strategy << ", line search " << ls << ", problem " << c.problem->name() << ", start " << s);
+                    json params;
+                    params["solver"] = strategy;
+                    params["line_search"]["method"] = ls;
+                    params["grad_norm_tol"] = 1e-8;
+                    params["rel_grad_norm_tol"] = 0;
+                    params["max_iterations"] = 5000;
+                    auto solver = Solver::create(params, {{"solver", "Eigen::LDLT"}}, 1, *logger);
+
+                    TestProblem::TVector x = c.starts[s];
+                    REQUIRE_NOTHROW(solver->minimize(*c.problem, x));
+                    CHECK(solver->status() == Status::GradNormTolerance);
+                    const json &info = solver->info();
+                    INFO("finished on " << info["active_strategy"] << ", transitions " << info["strategy_transition_counts"].dump());
+                    CHECK(info["active_strategy"] == strategy);
+                    CHECK(info["strategy_transition_counts"].empty());
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("box-constrained-methods-are-named-by-the-unconstrained-solver", "[solver]")
+{
+    // The spec shared by both solvers offers L-BFGS-B and MMA; the
+    // unconstrained solver cannot run them and says why, rather than calling
+    // them unrecognized (BFGS audit finding 5).
+    static std::shared_ptr<spdlog::logger> logger = spdlog::stdout_color_mt("box-constrained-names");
+    logger->set_level(spdlog::level::off);
+    for (const std::string name : BoxConstraintSolver::available_solvers())
+    {
+        INFO(name);
+        CHECK_THROWS_WITH(Solver::create(json{{"solver", name}}, json::object(), 1, *logger),
+                          Catch::Contains(name + " is a box-constrained method") && Catch::Contains("L-BFGS"));
+        // BoxConstraintSolver still constructs it
+        json boxed = {{"solver", name}, {"box_constraints", {{"bounds", std::vector<double>({0, 1})}, {"max_change", 1}}}};
+        if (name == "MMA")
+            boxed["line_search"] = {{"method", "None"}};
+        CHECK_NOTHROW(BoxConstraintSolver::create(boxed, json::object(), 1, *logger));
+    }
+    CHECK_THROWS_WITH(Solver::create(json{{"solver", "NoSuchMethod"}}, json::object(), 1, *logger),
+                      Catch::Contains("invalid input json") || Catch::Contains("Unrecognized solver type"));
+}
+
+TEST_CASE("dense-method-requirements-are-named", "[solver]")
+{
+    // BFGS audit stage 5: the requirements a forward caller can miss are
+    // stated where they are enforced -- dense BFGS needs a dense linear
+    // solver, the dense Newton strategies a problem with a dense Hessian.
+    static std::shared_ptr<spdlog::logger> logger = spdlog::stdout_color_mt("dense-requirements");
+    logger->set_level(spdlog::level::off);
+    CHECK_THROWS_WITH(Solver::create(json{{"solver", "BFGS"}}, json{{"solver", "Eigen::SimplicialLDLT"}}, 1, *logger),
+                      Catch::Contains("BFGS linear solver must be dense") && Catch::Contains("Eigen::LDLT"));
+    CHECK_NOTHROW(Solver::create(json{{"solver", "BFGS"}}, json{{"solver", "Eigen::LDLT"}}, 1, *logger));
+
+    // A problem that assembles only a sparse Hessian, as PolyFEM's do.
+    class SparseOnly : public Problem
+    {
+    public:
+        double value(const TVector &x) override { return 0.5 * x.squaredNorm(); }
+        void gradient(const TVector &x, TVector &g) override { g = x; }
+        void hessian(const TVector &x, THessian &h) override { h = sparse_identity(x.size(), x.size()); }
+    } problem;
+    json params = {{"solver", json::array({json{{"type", "DenseNewton"}}})}, {"max_iterations", 10}};
+    auto solver = Solver::create(params, json{{"solver", "Eigen::LDLT"}}, 1, *logger);
+    Eigen::VectorXd x = Eigen::VectorXd::Ones(3);
+    CHECK_THROWS_WITH(solver->minimize(problem, x),
+                      Catch::Contains("Dense Hessian not implemented by this problem") && Catch::Contains("use a sparse Newton strategy"));
+}
+
+TEST_CASE("adam-takes-its-own-steps", "[solver][adam]")
+{
+    // ADAM counted its steps from 0, so its first bias correction divided by
+    // 1 - beta^0 = 0 and every first direction was NaN: the solver escalated
+    // to GradientDescent before ADAM took a step, and again after each reset
+    // (the escalation report of stage 5 showed it on every ADAM solve). It
+    // also never kept its moment estimates. Deterministic, strategy alone.
+    static std::shared_ptr<spdlog::logger> logger = spdlog::stdout_color_mt("adam-own-steps");
+    logger->set_level(spdlog::level::off);
+    for (const std::string strategy : {"ADAM", "StochasticADAM"})
+    {
+        INFO(strategy);
+        QuadraticProblem problem;
+        json params;
+        params["solver"] = json::array({json{{"type", strategy}}});
+        params["line_search"]["method"] = "None";
+        params["grad_norm_tol"] = 1e-6;
+        params["rel_grad_norm_tol"] = 0;
+        params["max_iterations"] = 20000;
+        auto solver = Solver::create(params, json::object(), 1, *logger);
+        TestProblem::TVector x = TestProblem::TVector::Zero(3);
+        REQUIRE_NOTHROW(solver->minimize(problem, x));
+        CHECK(solver->status() == Status::GradNormTolerance);
+        CHECK(solver->info()["strategy_transition_counts"].empty());
+        CHECK((x - problem.solutions()[0]).norm() < 1e-5);
     }
 }

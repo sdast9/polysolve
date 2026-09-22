@@ -70,7 +70,9 @@ namespace polysolve::nonlinear
         linear_solver = polysolve::linear::Solver::create(linear_solver_params, logger);
 
         if (linear_solver->is_dense() == sparse)
-            log_and_throw_error(logger, "Newton linear solver must be {}, instead got {}", sparse ? "sparse" : "dense", linear_solver->name());
+            log_and_throw_error(
+                logger, "Newton linear solver must be {}, instead got {}{}", sparse ? "sparse" : "dense", linear_solver->name(),
+                sparse ? "" : ": the dense Newton strategies also need a problem that provides a dense Hessian; for a problem that assembles a sparse one, use Newton");
 
         if (residual_tolerance <= 0)
             log_and_throw_error(logger, "Newton residual_tolerance must be > 0, instead got {}", residual_tolerance);

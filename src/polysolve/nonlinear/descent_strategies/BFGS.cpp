@@ -16,7 +16,10 @@ namespace polysolve::nonlinear
     {
         linear_solver = polysolve::linear::Solver::create(linear_solver_params, logger);
         if (!linear_solver->is_dense())
-            log_and_throw_error(logger, "BFGS linear solver must be dense, instead got {}", linear_solver->name());
+            log_and_throw_error(
+                logger, "BFGS linear solver must be dense, instead got {}: BFGS factorizes a dense n x n "
+                        "approximation of the Hessian; use a dense solver such as Eigen::LDLT (or L-BFGS, which needs none)",
+                linear_solver->name());
     }
 
     void BFGS::reset(const int ndof)

@@ -45,7 +45,7 @@
             "L-BFGS-B",
             "MMA"
         ],
-        "doc": "Nonlinear solver type"
+        "doc": "Nonlinear solver type. L-BFGS-B and MMA are box-constrained methods and run only in BoxConstraintSolver (bounded optimization); the others run in the unconstrained Solver. DenseNewton and BFGS need a dense linear solver, and DenseNewton a problem that provides a dense Hessian."
     },
     {
         "pointer": "/x_delta_tol",

@@ -50,19 +50,28 @@ namespace polysolve::nonlinear
                 grad_modified(i) *= (mask(i) < erase_component_probability_) ? 0. : 1.;
         }
 
+        // Kingma and Ba's step counter starts at 1: the bias corrections
+        // below divide by 1 - beta^t, which is 0 at t = 0. Counting from 0
+        // made every first direction 0/0, so the solver escalated to its
+        // fallback before ADAM took a step, and again after every reset.
+        ++t_;
+
         TVector m = (beta_1_ * m_prev_) + ((1 - beta_1_) * grad_modified);
         TVector v = beta_2_ * v_prev_;
         for (int i = 0; i < v.size(); ++i)
             v(i) += (1 - beta_2_) * grad_modified(i) * grad_modified(i);
 
-        m = m.array() / (1 - pow(beta_1_, t_));
-        v = v.array() / (1 - pow(beta_2_, t_));
+        // The moment estimates carry over; only the step uses their
+        // bias-corrected values.
+        m_prev_ = m;
+        v_prev_ = v;
 
-        direction = -alpha_ * m;
-        for (int i = 0; i < v.size(); ++i)
-            direction(i) /= sqrt(v(i) + epsilon_);
+        const TVector m_hat = m.array() / (1 - pow(beta_1_, t_));
+        const TVector v_hat = v.array() / (1 - pow(beta_2_, t_));
 
-        ++t_;
+        direction = -alpha_ * m_hat;
+        for (int i = 0; i < v_hat.size(); ++i)
+            direction(i) /= sqrt(v_hat(i) + epsilon_);
 
         return true;
     }

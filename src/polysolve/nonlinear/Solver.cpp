@@ -11,6 +11,8 @@
 #include "descent_strategies/GradientDescent.hpp"
 #include "descent_strategies/LBFGS.hpp"
 
+#include "BoxConstraintSolver.hpp"
+
 #include <polysolve/Utils.hpp>
 
 #include <jse/jse.h>
@@ -103,7 +105,23 @@ namespace polysolve::nonlinear
                 return std::make_shared<ADAM>(solver_params, true, characteristic_length, logger);
             }
             else
+            {
+                // The shared spec offers the box-constrained methods too; they
+                // are strategies of BoxConstraintSolver, not of this solver.
+                const auto boxed = BoxConstraintSolver::available_solvers();
+                if (std::find(boxed.begin(), boxed.end(), solver_name) != boxed.end())
+                {
+                    std::string unconstrained;
+                    for (const auto &name : Solver::available_solvers())
+                        unconstrained += (unconstrained.empty() ? "" : ", ") + name;
+                    throw std::runtime_error(
+                        "Nonlinear solver type " + solver_name + " is a box-constrained method: it runs only in "
+                                                                 "BoxConstraintSolver (bounded optimization), not in an unconstrained minimization. "
+                                                                 "Unconstrained methods: "
+                        + unconstrained);
+                }
                 throw std::runtime_error("Unrecognized solver type: " + solver_name);
+            }
         }
 
     } // namespace

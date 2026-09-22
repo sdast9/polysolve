@@ -58,7 +58,9 @@ namespace polysolve::nonlinear
         /// @param[out] hessian Hessian of the function at x.
         virtual void hessian(const TVector &x, TMatrix &hessian)
         {
-            throw std::runtime_error("Dense Hessian not implemented.");
+            throw std::runtime_error(
+                "Dense Hessian not implemented by this problem: the dense Newton strategies "
+                "(DenseNewton and its variants) cannot run on it; use a sparse Newton strategy (Newton).");
         }
 
         /// @brief Compute the Hessian of the function at x.
