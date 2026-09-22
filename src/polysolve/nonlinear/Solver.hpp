@@ -5,6 +5,9 @@
 // Line search methods
 #include "line_search/LineSearch.hpp"
 
+#include <limits>
+#include <map>
+
 namespace spdlog
 {
     class logger;
@@ -183,6 +186,16 @@ namespace polysolve::nonlinear
         /// @param ndof number of degrees of freedom
         void reset(const int ndof);
 
+        /// Record a change between configured descent strategies. Internal
+        /// L-BFGS steepest-descent restarts are strategy diagnostics instead;
+        /// keeping the two separate is essential when diagnosing fallback
+        /// scale jumps.
+        void record_strategy_transition(
+            const std::string &from,
+            const std::string &to,
+            const std::string &reason,
+            const json &details = json::object());
+
         std::string descent_strategy_name() const { return m_strategies[m_descent_strategy]->name(); };
 
         std::shared_ptr<line_search::LineSearch> m_line_search;
@@ -193,6 +206,13 @@ namespace polysolve::nonlinear
         std::function<bool(const Criteria &)> m_iteration_callback = nullptr;
 
         std::function<void(const TVector &, TVector &)> m_direction_filter = nullptr;
+
+        bool m_iteration_diagnostics_enabled = false;
+        json m_last_iteration_diagnostics = nullptr;
+        json m_strategy_transition_events = json::array();
+        json m_pending_strategy_transitions = json::array();
+        std::map<std::string, int> m_strategy_transition_counts;
+        double m_previous_accepted_direction_norm = std::numeric_limits<double>::quiet_NaN();
 
         // ====================================================================
         //                            Solver info
@@ -217,6 +237,7 @@ namespace polysolve::nonlinear
         double update_direction_time;
         double line_search_time;
         double constraint_set_update_time;
+        double diagnostics_time;
 
         // ====================================================================
         //                                 END

@@ -14,19 +14,19 @@ namespace polysolve::nonlinear::line_search
     public:
         using Scalar = typename Problem::Scalar;
         using TVector = typename Problem::TVector;
-      
+
     public:
         /// @brief Constructor for creating new LineSearch Object
         /// @param params JSON of solver parameters
-        /// @param m_logger 
+        /// @param m_logger
         LineSearch(const json &params, spdlog::logger &m_logger);
         virtual ~LineSearch() = default;
 
-        /// @brief 
+        /// @brief
         /// @param x Current input vector (n x 1)
         /// @param x_delta Current descent direction (n x 1)
         /// @param objFunc Objective function
-        /// @return 
+        /// @return
         double line_search(
             const TVector &x,
             const TVector &x_delta,
@@ -34,7 +34,7 @@ namespace polysolve::nonlinear::line_search
 
         /// @brief Dispatch function for creating appropriate subclass
         /// @param params JSON of solver parameters
-        /// @param logger 
+        /// @param logger
         /// @return Pointer to object of the specified subclass
         static std::shared_ptr<LineSearch> create(
             const json &params,
@@ -67,6 +67,12 @@ namespace polysolve::nonlinear::line_search
 
         int iterations() const { return cur_iter; }
 
+        /// Observational details of the most recent search. Step sizes are
+        /// absolute multipliers of the strategy direction; the feasible value
+        /// is after the finite-energy and forms/CCD caps and before descent
+        /// backtracking.
+        const json &diagnostics() const { return m_last_diagnostics; }
+
         double checking_for_nan_inf_time;
         double broad_phase_ccd_time;
         double narrow_phase_ccd_time;
@@ -77,7 +83,7 @@ namespace polysolve::nonlinear::line_search
         NormType norm_type = NormType::EUCLIDEAN;
 
     protected:
-        /// @brief Compute step size to use during line search 
+        /// @brief Compute step size to use during line search
         /// @param x Current input (n x 1)
         /// @param delta_x Current step direction (n x 1)
         /// @param objFunc Problem to be minimized
@@ -133,5 +139,7 @@ namespace polysolve::nonlinear::line_search
         bool is_final_strategy;
 
         double default_init_step_size;
+
+        json m_last_diagnostics = json::object();
     };
 } // namespace polysolve::nonlinear::line_search

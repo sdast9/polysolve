@@ -25,6 +25,12 @@ namespace polysolve::nonlinear
             const TVector &grad,
             TVector &direction) override;
 
+        json diagnostics() const override
+        {
+            return {{"direction_source", is_stochastic_ ? "stochastic_gradient_descent" : "gradient_descent"},
+                    {"uses_steepest_descent", !is_stochastic_}};
+        }
+
     private:
         bool is_stochastic_ = false;
         double erase_component_probability_ = 0;

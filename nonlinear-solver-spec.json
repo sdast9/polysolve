@@ -860,7 +860,8 @@
             "f_delta_step_tol",
             "derivative_along_delta_x_tol",
             "apply_gradient_fd",
-            "gradient_fd_eps"
+            "gradient_fd_eps",
+            "iteration_diagnostics"
         ],
         "doc": "Nonlinear solver advanced options"
     },
@@ -900,5 +901,11 @@
         "default": 1e-07,
         "type": "float",
         "doc": "Expensive Option: Eps for finite difference to verify gradient of energy."
+    },
+    {
+        "pointer": "/advanced/iteration_diagnostics",
+        "default": false,
+        "type": "bool",
+        "doc": "Expensive observational diagnostics for nonlinear iterations. Records the active strategy, direction and gradient scales, line-search feasibility and accepted endpoint slope. The extra endpoint gradient evaluation does not change acceptance or stopping."
     }
 ]

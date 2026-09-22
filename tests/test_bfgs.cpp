@@ -742,3 +742,95 @@ TEST_CASE("bfgs-curvature-alone-cannot-see-an-objective-change", "[solver][bfgs]
         }
     }
 }
+
+TEST_CASE("bfgs-iteration-diagnostics-distinguish-gradient-descent-escalation", "[solver][bfgs][diagnostics]")
+{
+    spdlog::logger logger("bfgs-iteration-diagnostics", std::make_shared<spdlog::sinks::null_sink_mt>());
+
+    // A highly anisotropic fixed quadratic makes the scale discontinuity easy
+    // to see. After the first accepted step, reject directions whose norm has
+    // collapsed relative to the gradient. The L-BFGS history direction is
+    // therefore rejected, while the separately configured GradientDescent
+    // fallback is feasible. This is a diagnostic fixture, not an argument for
+    // that validity rule or a change to fallback policy.
+    class DirectionGateQuadratic : public Problem
+    {
+    public:
+        double value(const TVector &x) override { return .5 * (1e6 * x[0] * x[0] + x[1] * x[1]); }
+        void gradient(const TVector &x, TVector &grad) override
+        {
+            grad.resize(2);
+            grad << 1e6 * x[0], x[1];
+        }
+        void hessian(const TVector &, THessian &hess) override
+        {
+            hess.resize(2, 2);
+            hess.setZero();
+            hess.coeffRef(0, 0) = 1e6;
+            hess.coeffRef(1, 1) = 1;
+        }
+        bool is_step_valid(const TVector &x0, const TVector &x1) override
+        {
+            if (!gate)
+                return true;
+            TVector grad;
+            gradient(x0, grad);
+            const TVector step = x1 - x0;
+            if (grad.norm() > 0 && step.norm() / grad.norm() > 0.5)
+                admit_trial_sequence = true;
+            return admit_trial_sequence;
+        }
+        void post_step(const PostStepData &data) override
+        {
+            if (data.solver_info.contains("iteration_diagnostics")
+                && data.solver_info["iteration_diagnostics"].is_object())
+            {
+                iterations.push_back(data.solver_info["iteration_diagnostics"]);
+                gate = true;
+                admit_trial_sequence = false;
+            }
+        }
+
+        bool gate = false;
+        bool admit_trial_sequence = false;
+        std::vector<json> iterations;
+    } problem;
+
+    json params = {
+        {"solver", "L-BFGS"}, // public form: L-BFGS, then GradientDescent
+        {"max_iterations", 2},
+        {"allow_out_of_iterations", true},
+        {"grad_norm_tol", 0},
+        {"rel_grad_norm_tol", 0},
+        {"first_grad_norm_tol", 0},
+        {"line_search", {{"method", "Armijo"}}},
+        {"advanced", {{"derivative_along_delta_x_tol", 0}, {"iteration_diagnostics", true}}}};
+    auto solver = Solver::create(params, {{"solver", "Eigen::LDLT"}}, 1, logger);
+    Eigen::VectorXd x = Eigen::VectorXd::Ones(2);
+    REQUIRE_NOTHROW(solver->minimize(problem, x));
+
+    REQUIRE(problem.iterations.size() == 2);
+    const json &limited = problem.iterations[0];
+    const json &fallback = problem.iterations[1];
+    CHECK(limited["strategy"] == "L-BFGS");
+    CHECK(limited["strategy_state"]["direction_source"] == "steepest_descent_initial_or_reset");
+    CHECK(limited["accepted"]["endpoint"]["same_objective_as_initial_slope"] == true);
+    CHECK(limited["accepted"]["endpoint"]["slope"].is_number());
+
+    CHECK(fallback["strategy"] == "GradientDescent");
+    CHECK(fallback["strategy_state"]["direction_source"] == "gradient_descent");
+    CHECK(fallback["direction"]["norm_over_gradient_norm"] == Approx(1));
+    REQUIRE(fallback["strategy_transitions_since_previous_accept"].size() == 1);
+    const json &transition = fallback["strategy_transitions_since_previous_accept"][0];
+    CHECK(transition["from"] == "L-BFGS");
+    CHECK(transition["to"] == "GradientDescent");
+    CHECK(transition["reason"] == "line_search_failed");
+    REQUIRE(transition["failed_attempt"]["direction_norm"].is_number());
+    const double rejected_norm = transition["failed_attempt"]["direction_norm"];
+    const double gradient_direction_norm = fallback["direction"]["euclidean_norm"];
+    CHECK(gradient_direction_norm / rejected_norm > 1e3);
+
+    const json info = solver->info();
+    CHECK(info["strategy_transition_counts"]["L-BFGS->GradientDescent:line_search_failed"] == 1);
+    CHECK(info["direction_sources"]["L-BFGS"]["limited_memory"] == 1);
+}

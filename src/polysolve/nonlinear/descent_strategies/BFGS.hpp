@@ -10,6 +10,8 @@
 
 #include <LBFGSpp/BFGSMat.h>
 
+#include <map>
+
 namespace polysolve::nonlinear
 {
     class BFGS : public DescentStrategy
@@ -40,11 +42,17 @@ namespace polysolve::nonlinear
             reset(ndof);
         }
 
-        void reset_times() override { m_guard.reset_counts(); }
+        void reset_times() override
+        {
+            m_guard.reset_counts();
+            m_direction_sources.clear();
+        }
         void update_solver_info(json &solver_info, const double per_iteration) override
         {
             m_guard.update_solver_info(solver_info);
+            solver_info["direction_sources"][name()] = m_direction_sources;
         }
+        json diagnostics() const override { return m_last_diagnostics; }
 
     private:
         TVector m_prev_x;    // Previous x
@@ -54,6 +62,9 @@ namespace polysolve::nonlinear
 
         /// Validates the secant pairs before they reach the approximation
         CurvatureGuard m_guard;
+
+        json m_last_diagnostics = json::object();
+        std::map<std::string, int> m_direction_sources;
 
         void reset_history(const int ndof);
 

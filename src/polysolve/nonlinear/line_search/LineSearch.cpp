@@ -75,6 +75,15 @@ namespace polysolve::nonlinear::line_search
         const TVector &delta_x,
         Problem &objFunc)
     {
+        m_last_diagnostics = {
+            {"initial_step_size", default_init_step_size},
+            {"nan_free_step_size", nullptr},
+            {"feasible_step_size", nullptr},
+            {"accepted_step_size", nullptr},
+            {"accepted_over_feasible", nullptr},
+            {"iterations", 0},
+            {"failure_stage", nullptr}};
+
         // ----------------
         // Begin linesearch
         // ----------------
@@ -89,6 +98,7 @@ namespace polysolve::nonlinear::line_search
             if (std::isnan(initial_energy))
             {
                 m_logger.error("Original energy in line search is nan!");
+                m_last_diagnostics["failure_stage"] = "initial_energy";
                 return NaN;
             }
 
@@ -96,6 +106,7 @@ namespace polysolve::nonlinear::line_search
             if (!initial_grad.array().isFinite().all())
             {
                 m_logger.error("Original gradient in line search is nan!");
+                m_last_diagnostics["failure_stage"] = "initial_gradient";
                 return NaN;
             }
 
@@ -112,10 +123,15 @@ namespace polysolve::nonlinear::line_search
             POLYSOLVE_SCOPED_STOPWATCH("LS compute finite energy step size", checking_for_nan_inf_time, m_logger);
             step_size = compute_nan_free_step_size(x, delta_x, objFunc, step_size, step_ratio);
             if (std::isnan(step_size))
+            {
+                m_last_diagnostics["failure_stage"] = "finite_energy";
+                m_last_diagnostics["iterations"] = cur_iter;
                 return NaN;
+            }
         }
 
         const double nan_free_step_size = step_size;
+        m_last_diagnostics["nan_free_step_size"] = nan_free_step_size;
         // -----------------------------
         // Find collision-free step size
         // -----------------------------
@@ -130,16 +146,26 @@ namespace polysolve::nonlinear::line_search
             m_logger.trace("Performing narrow-phase CCD");
             step_size = compute_max_step_size(x, delta_x, objFunc, step_size);
             if (std::isnan(step_size))
+            {
+                m_last_diagnostics["failure_stage"] = "feasibility_bound";
+                m_last_diagnostics["iterations"] = cur_iter;
                 return NaN;
+            }
         }
 
         const double collision_free_step_size = step_size;
+        m_last_diagnostics["feasible_step_size"] = collision_free_step_size;
 
         if (objFunc.grad_norm(initial_grad, norm_type) < 1e-30)
+        {
+            m_last_diagnostics["accepted_step_size"] = step_size;
+            m_last_diagnostics["accepted_over_feasible"] = 1.;
             return step_size;
+        }
 
         // TODO: Fix this
         const bool use_grad_norm = objFunc.grad_norm(initial_grad, norm_type) < use_grad_norm_tol * objFunc.grad_norm_rescaling(norm_type);
+        m_last_diagnostics["use_gradient_norm_acceptance"] = use_grad_norm;
         const double starting_step_size = step_size;
 
         // ----------------------
@@ -151,6 +177,8 @@ namespace polysolve::nonlinear::line_search
             if (std::isnan(step_size))
             {
                 // Superclass::save_sampled_values("failed-line-search-values.csv", x, delta_x, objFunc);
+                m_last_diagnostics["failure_stage"] = "descent_search";
+                m_last_diagnostics["iterations"] = cur_iter;
                 return NaN;
             }
         }
@@ -171,6 +199,8 @@ namespace polysolve::nonlinear::line_search
             assert(abs(initial_energy - objFunc(x)) < 1e-15);
 
             objFunc.line_search_end();
+            m_last_diagnostics["failure_stage"] = "descent_search";
+            m_last_diagnostics["iterations"] = cur_iter;
             return NaN;
         }
 
@@ -182,6 +212,12 @@ namespace polysolve::nonlinear::line_search
         m_logger.debug(
             "Line search finished (nan_free_step_size={} collision_free_step_size={} descent_step_size={} final_step_size={})",
             nan_free_step_size, collision_free_step_size, descent_step_size, step_size);
+
+        m_last_diagnostics["accepted_step_size"] = step_size;
+        m_last_diagnostics["accepted_over_feasible"] = collision_free_step_size > 0
+                                                           ? json(step_size / collision_free_step_size)
+                                                           : json(nullptr);
+        m_last_diagnostics["iterations"] = cur_iter;
 
         return step_size;
     }

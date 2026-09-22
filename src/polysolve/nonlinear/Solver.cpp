@@ -227,6 +227,7 @@ namespace polysolve::nonlinear
 
         gradient_fd_strategy = solver_params["advanced"]["apply_gradient_fd"];
         gradient_fd_eps = solver_params["advanced"]["gradient_fd_eps"];
+        m_iteration_diagnostics_enabled = solver_params["advanced"]["iteration_diagnostics"];
     }
 
     void Solver::set_strategies_iterations(const json &solver_params)
@@ -252,9 +253,34 @@ namespace polysolve::nonlinear
         m_line_search->norm_type = params["norm_type"];
     }
 
+    void Solver::record_strategy_transition(
+        const std::string &from,
+        const std::string &to,
+        const std::string &reason,
+        const json &details)
+    {
+        const std::string key = from + "->" + to + ":" + reason;
+        ++m_strategy_transition_counts[key];
+        if (!m_iteration_diagnostics_enabled)
+            return;
+
+        json event = {
+            {"from", from},
+            {"to", to},
+            {"reason", reason},
+            {"iteration", m_current.iterations}};
+        if (!details.empty())
+            event["failed_attempt"] = details;
+        m_strategy_transition_events.push_back(event);
+        m_pending_strategy_transitions.push_back(std::move(event));
+    }
+
     void Solver::minimize(Problem &objFunc, TVector &x)
     {
         constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
+        const auto finite_or_null = [](const double value) {
+            return std::isfinite(value) ? json(value) : json(nullptr);
+        };
 
         reset_stopping_criteria(objFunc, m_norm_type);
 
@@ -402,7 +428,8 @@ namespace polysolve::nonlinear
             if (!update_direction_successful || std::isnan(m_current.xDelta))
             {
                 const auto current_name = descent_strategy_name();
-                if (!m_strategies[m_descent_strategy]->handle_error())
+                const int current_strategy = m_descent_strategy;
+                if (!m_strategies[current_strategy]->handle_error())
                     ++m_descent_strategy;
 
                 if (m_descent_strategy >= m_strategies.size())
@@ -412,6 +439,14 @@ namespace polysolve::nonlinear
                         m_logger, "[{}][{}] {} on last strategy; stopping",
                         current_name, m_line_search->name(), status_message(m_status));
                 }
+
+                if (m_descent_strategy != current_strategy)
+                    record_strategy_transition(
+                        current_name, descent_strategy_name(), "update_direction_failed",
+                        {{"direction_norm", finite_or_null(delta_x.norm())},
+                         {"direction_problem_norm", finite_or_null(m_current.xDelta)},
+                         {"gradient_norm", finite_or_null(m_current.gradNorm)},
+                         {"strategy", m_strategies[current_strategy]->diagnostics()}});
 
                 m_logger.debug(
                     "[{}][{}] {}; reverting to {}", current_name, m_line_search->name(),
@@ -444,8 +479,9 @@ namespace polysolve::nonlinear
             if (!objFunc.is_residual() && m_strategies[m_descent_strategy]->is_direction_descent() && m_current.gradNorm != 0 && m_current.xDeltaDotGrad >= 0)
             {
                 const std::string current_name = descent_strategy_name();
+                const int current_strategy = m_descent_strategy;
 
-                if (!m_strategies[m_descent_strategy]->handle_error())
+                if (!m_strategies[current_strategy]->handle_error())
                     ++m_descent_strategy;
 
                 if (m_descent_strategy >= m_strategies.size())
@@ -460,6 +496,14 @@ namespace polysolve::nonlinear
                 }
                 else
                 {
+                    if (m_descent_strategy != current_strategy)
+                        record_strategy_transition(
+                            current_name, descent_strategy_name(), "non_descent_direction",
+                            {{"direction_norm", finite_or_null(delta_x.norm())},
+                             {"direction_problem_norm", finite_or_null(m_current.xDelta)},
+                             {"gradient_norm", finite_or_null(m_current.gradNorm)},
+                             {"initial_slope", finite_or_null(m_current.xDeltaDotGrad)},
+                             {"strategy", m_strategies[current_strategy]->diagnostics()}});
                     m_status = Status::Continue;
                     m_logger.debug(
                         "[{}][{}] {} ({}={:g}; {}={:g}; {}={:g}{}0); reverting to {}",
@@ -497,8 +541,9 @@ namespace polysolve::nonlinear
             if (std::isnan(rate))
             {
                 const auto current_name = descent_strategy_name();
+                const int current_strategy = m_descent_strategy;
                 assert(m_status == Status::Continue);
-                if (!m_strategies[m_descent_strategy]->handle_error())
+                if (!m_strategies[current_strategy]->handle_error())
                     ++m_descent_strategy;
                 if (m_descent_strategy >= m_strategies.size())
                 {
@@ -507,16 +552,93 @@ namespace polysolve::nonlinear
                     log_and_throw_error(m_logger, "[{}][{}] Line search failed on last strategy; stopping", current_name, m_line_search->name());
                 }
 
+                if (m_descent_strategy != current_strategy)
+                    record_strategy_transition(
+                        current_name, descent_strategy_name(), "line_search_failed",
+                        {{"direction_norm", finite_or_null(delta_x.norm())},
+                         {"direction_problem_norm", finite_or_null(m_current.xDelta)},
+                         {"gradient_norm", finite_or_null(m_current.gradNorm)},
+                         {"initial_slope", finite_or_null(m_current.xDeltaDotGrad)},
+                         {"line_search", m_line_search->diagnostics()},
+                         {"strategy", m_strategies[current_strategy]->diagnostics()}});
+
                 m_logger.debug("[{}] Line search failed; reverting to {}", current_name, descent_strategy_name());
                 continue;
             }
 
+            const std::string accepted_strategy = descent_strategy_name();
+            const int accepted_strategy_index = m_descent_strategy;
+            TVector x1 = x + rate * delta_x;
+            json iteration_diagnostics = nullptr;
+            if (m_iteration_diagnostics_enabled)
             {
-                TVector x1 = x + rate * delta_x;
-                if (objFunc.after_line_search_custom_operation(x, x1))
-                    objFunc.solution_changed(x1);
-                x = x1;
+                const double direction_norm = delta_x.norm();
+                const double gradient_norm = grad.norm();
+                const uint64_t generation_after_line_search = objFunc.objective_generation();
+                json endpoint = {
+                    {"gradient_euclidean_norm", nullptr},
+                    {"gradient_problem_norm", nullptr},
+                    {"slope", nullptr},
+                    {"slope_over_initial_slope", nullptr},
+                    {"objective_generation", generation_after_line_search},
+                    {"same_objective_as_initial_slope", generation_after_line_search == objective_generation},
+                    {"unavailable_reason", nullptr}};
+                try
+                {
+                    POLYSOLVE_SCOPED_STOPWATCH("iteration diagnostics", diagnostics_time, m_logger);
+                    TVector endpoint_grad;
+                    objFunc.gradient(x1, endpoint_grad);
+                    const double endpoint_slope = endpoint_grad.dot(delta_x);
+                    endpoint["gradient_euclidean_norm"] = finite_or_null(endpoint_grad.norm());
+                    endpoint["gradient_problem_norm"] = finite_or_null(compute_grad_norm(objFunc, x1, endpoint_grad));
+                    endpoint["slope"] = finite_or_null(endpoint_slope);
+                    if (std::isfinite(endpoint_slope) && std::isfinite(m_current.xDeltaDotGrad)
+                        && m_current.xDeltaDotGrad != 0)
+                        endpoint["slope_over_initial_slope"] = endpoint_slope / m_current.xDeltaDotGrad;
+                }
+                catch (const std::exception &e)
+                {
+                    endpoint["unavailable_reason"] = e.what();
+                }
+                catch (...)
+                {
+                    endpoint["unavailable_reason"] = "non-standard exception during diagnostic endpoint gradient";
+                }
+
+                iteration_diagnostics = {
+                    {"iteration", m_current.iterations + 1},
+                    {"strategy", accepted_strategy},
+                    {"strategy_index", accepted_strategy_index},
+                    {"objective_generation", objective_generation},
+                    {"direction",
+                     {{"euclidean_norm", finite_or_null(direction_norm)},
+                      {"problem_norm", finite_or_null(m_current.xDelta)},
+                      {"gradient_euclidean_norm", finite_or_null(gradient_norm)},
+                      {"gradient_problem_norm", finite_or_null(m_current.gradNorm)},
+                      {"norm_over_gradient_norm", gradient_norm > 0 && std::isfinite(direction_norm)
+                                                      ? json(direction_norm / gradient_norm)
+                                                      : json(nullptr)},
+                      {"norm_over_previous_accepted_direction", std::isfinite(m_previous_accepted_direction_norm)
+                                                                        && m_previous_accepted_direction_norm > 0
+                                                                    ? json(direction_norm / m_previous_accepted_direction_norm)
+                                                                    : json(nullptr)},
+                      {"initial_slope", finite_or_null(m_current.xDeltaDotGrad)}}},
+                    {"strategy_state", m_strategies[accepted_strategy_index]->diagnostics()},
+                    {"line_search", m_line_search->diagnostics()},
+                    {"accepted",
+                     {{"alpha", rate},
+                      {"euclidean_norm", finite_or_null((rate * delta_x).norm())},
+                      {"problem_norm", finite_or_null(objFunc.step_norm(rate * delta_x, m_norm_type))},
+                      {"endpoint", endpoint}}},
+                    {"strategy_transitions_since_previous_accept", m_pending_strategy_transitions}};
+                m_previous_accepted_direction_norm = direction_norm;
             }
+
+            if (objFunc.after_line_search_custom_operation(x, x1))
+                objFunc.solution_changed(x1);
+            if (m_iteration_diagnostics_enabled)
+                iteration_diagnostics["objective_generation_after_custom_operation"] = objFunc.objective_generation();
+            x = x1;
 
             old_energy = energy;
 
@@ -528,15 +650,15 @@ namespace polysolve::nonlinear
             if (m_descent_strategy != 0 && current_strategy_iter >= m_iter_per_strategy[m_descent_strategy])
             {
                 const auto current_name = descent_strategy_name();
-                const std::string prev_strategy_name = descent_strategy_name();
 
                 m_descent_strategy = 0;
+                record_strategy_transition(current_name, descent_strategy_name(), "fallback_window_complete");
                 for (auto &s : m_strategies)
                     s->reset(x.size());
 
                 m_logger.debug(
                     "[{}][{}] {} was successful for {} iterations; resetting to {}",
-                    current_name, m_line_search->name(), prev_strategy_name, current_strategy_iter, descent_strategy_name());
+                    current_name, m_line_search->name(), current_name, current_strategy_iter, descent_strategy_name());
             }
 
             previous_strategy = m_descent_strategy;
@@ -548,11 +670,19 @@ namespace polysolve::nonlinear
             const double step = (rate * delta_x).norm();
             m_current.step = step;
 
+            if (m_iteration_diagnostics_enabled)
+            {
+                iteration_diagnostics["strategy_transitions_since_previous_accept"] = m_pending_strategy_transitions;
+                m_last_iteration_diagnostics = std::move(iteration_diagnostics);
+            }
+
             // m_logger.debug("[{}][{}] rate={:g} ‖step‖={:g}",
             //                descent_strategy_name(), m_line_search->name(), rate, step);
 
             update_solver_info(energy);
             objFunc.post_step(PostStepData(m_current.iterations, solver_info, x, grad));
+            if (m_iteration_diagnostics_enabled)
+                m_pending_strategy_transitions = json::array();
 
             if (objFunc.stop(x))
             {
@@ -606,6 +736,11 @@ namespace polysolve::nonlinear
         m_descent_strategy = 0;
         m_status = Status::NotStarted;
         m_objective_changes = 0;
+        m_last_iteration_diagnostics = nullptr;
+        m_strategy_transition_events = json::array();
+        m_pending_strategy_transitions = json::array();
+        m_strategy_transition_counts.clear();
+        m_previous_accepted_direction_norm = std::numeric_limits<double>::quiet_NaN();
 
         const std::string line_search_name = solver_info["line_search"];
         solver_info = json();
@@ -626,6 +761,7 @@ namespace polysolve::nonlinear
         update_direction_time = 0;
         line_search_time = 0;
         constraint_set_update_time = 0;
+        diagnostics_time = 0;
         if (m_line_search)
             m_line_search->reset_times();
         for (auto &s : m_strategies)
@@ -638,6 +774,16 @@ namespace polysolve::nonlinear
         solver_info["energy"] = energy;
         solver_info["iterations"] = m_current.iterations;
         solver_info["objective_changes"] = m_objective_changes;
+        solver_info["active_strategy"] = descent_strategy_name();
+        solver_info["active_strategy_index"] = m_descent_strategy;
+        solver_info["strategy_transition_counts"] = m_strategy_transition_counts;
+        if (m_iteration_diagnostics_enabled)
+        {
+            solver_info["iteration_diagnostics"] = m_last_iteration_diagnostics;
+            solver_info["strategy_transition_events"] = m_strategy_transition_events;
+            solver_info["pending_strategy_transitions"] = m_pending_strategy_transitions;
+            solver_info["time_iteration_diagnostics"] = diagnostics_time;
+        }
         solver_info["xDelta"] = m_current.xDelta;
         solver_info["fDelta"] = m_current.fDelta;
         solver_info["gradNorm"] = m_current.gradNorm;
@@ -665,6 +811,8 @@ namespace polysolve::nonlinear
             fmt::format(fmt::fg(fmt::terminal_color::magenta), "timing"),
             obj_fun_time, grad_time, update_direction_time, line_search_time,
             constraint_set_update_time);
+        if (m_iteration_diagnostics_enabled)
+            m_logger.debug("[{}] iteration diagnostics: {:.2e}s", fmt::format(fmt::fg(fmt::terminal_color::magenta), "timing"), diagnostics_time);
         for (auto &s : m_strategies)
             s->log_times();
         if (m_line_search)

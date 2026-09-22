@@ -3,6 +3,7 @@
 #include "CurvatureGuard.hpp"
 
 #include <cmath>
+#include <limits>
 
 namespace polysolve::nonlinear
 {
@@ -170,6 +171,26 @@ namespace polysolve::nonlinear
 
     bool CurvatureGuard::store(const PairVerdict verdict, const TVector &s, const TVector &y)
     {
+        const auto finite_or_null = [](const double value) {
+            return std::isfinite(value) ? json(value) : json(nullptr);
+        };
+        const double sy = s.dot(y);
+        const double snorm = s.norm();
+        const double ynorm = y.norm();
+        const double yy = y.squaredNorm();
+        double relative_curvature = std::numeric_limits<double>::quiet_NaN();
+        if (std::isfinite(snorm) && std::isfinite(ynorm) && snorm > 0 && ynorm > 0)
+            relative_curvature = (s / snorm).dot(y / ynorm);
+        m_last_pair = {
+            {"verdict", message(verdict)},
+            {"stored", verdict == PairVerdict::ACCEPTED || verdict == PairVerdict::DAMPED},
+            {"s_dot_y", finite_or_null(sy)},
+            {"s_norm", finite_or_null(snorm)},
+            {"y_norm", finite_or_null(ynorm)},
+            {"relative_curvature", finite_or_null(relative_curvature)},
+            {"hessian_initial_scale", finite_or_null(yy / sy)},
+            {"inverse_hessian_initial_scale", finite_or_null(sy / yy)}};
+
         if (verdict == PairVerdict::ACCEPTED)
         {
             ++m_accepted;
@@ -236,6 +257,7 @@ namespace polysolve::nonlinear
         m_damped = 0;
         m_skipped.clear();
         m_resets.clear();
+        m_last_pair = nullptr;
     }
 
     void CurvatureGuard::update_solver_info(json &solver_info) const

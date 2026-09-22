@@ -42,6 +42,14 @@ namespace polysolve::nonlinear
         virtual void update_solver_info(json &solver_info, const double per_iteration) {}
         virtual void log_times() const {}
 
+        /// @brief Observational state of the direction most recently computed.
+        ///
+        /// Used only by the opt-in nonlinear iteration diagnostics. Strategies
+        /// return an empty object when they have no strategy-specific state to
+        /// report; the solver supplies the common direction and line-search
+        /// quantities.
+        virtual json diagnostics() const { return json::object(); }
+
         virtual bool is_direction_descent() { return true; }
         virtual bool handle_error() { return false; }
 

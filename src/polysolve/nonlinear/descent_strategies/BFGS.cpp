@@ -23,6 +23,7 @@ namespace polysolve::nonlinear
     {
         Superclass::reset(ndof);
         reset_history(ndof);
+        m_last_diagnostics = json::object();
     }
 
     void BFGS::reset_history(const int ndof)
@@ -39,9 +40,11 @@ namespace polysolve::nonlinear
         const TVector &grad,
         TVector &direction)
     {
+        std::string direction_source;
         if (m_prev_x.size() == 0)
         {
             direction = -grad;
+            direction_source = "steepest_descent_initial_or_reset";
         }
         else
         {
@@ -79,10 +82,15 @@ namespace polysolve::nonlinear
 
             // Incorporate the latest accepted displacement before computing
             // the direction at x; otherwise the Hessian is one update stale.
-            if (m_guard.store(verdict, s, y))
+            const bool stored = m_guard.store(verdict, s, y);
+            bool restarted = false;
+            if (stored)
                 hess = std::move(updated);
             else if (m_guard.restart_required())
+            {
                 hess.setIdentity(x.size(), x.size()); // nothing in it is current
+                restarted = true;
+            }
 
             try
             {
@@ -95,8 +103,17 @@ namespace polysolve::nonlinear
                 m_logger.debug("Unable to factorize Hessian: \"{}\";", err.what());
                 m_guard.note_reset(ResetReason::FACTORIZATION_FAILED);
                 hess.setIdentity(x.size(), x.size());
+                m_last_diagnostics = {
+                    {"direction_source", "factorization_failed"},
+                    {"uses_steepest_descent", false},
+                    {"secant_pair", m_guard.last_pair()}};
+                ++m_direction_sources["factorization_failed"];
                 return false;
             }
+
+            direction_source = restarted ? "steepest_descent_curvature_restart"
+                               : stored  ? "dense_bfgs"
+                                         : "dense_bfgs_after_pair_skip";
 
             // A dense factorization of an indefinite matrix succeeds and
             // returns an ascent direction, so the direction itself is checked.
@@ -104,8 +121,15 @@ namespace polysolve::nonlinear
             {
                 hess.setIdentity(x.size(), x.size());
                 direction = -grad;
+                direction_source = "steepest_descent_invalid_hessian_direction";
             }
         }
+
+        m_last_diagnostics = {
+            {"direction_source", direction_source},
+            {"uses_steepest_descent", direction_source.rfind("steepest_descent", 0) == 0},
+            {"secant_pair", m_guard.last_pair()}};
+        ++m_direction_sources[direction_source];
 
         m_prev_x = x;
         m_prev_grad = grad;

@@ -8,6 +8,8 @@
 
 #include <LBFGSpp/BFGSMat.h>
 
+#include <map>
+
 namespace polysolve::nonlinear
 {
     class LBFGS : public DescentStrategy
@@ -38,11 +40,17 @@ namespace polysolve::nonlinear
             reset(ndof);
         }
 
-        void reset_times() override { m_guard.reset_counts(); }
+        void reset_times() override
+        {
+            m_guard.reset_counts();
+            m_direction_sources.clear();
+        }
         void update_solver_info(json &solver_info, const double per_iteration) override
         {
             m_guard.update_solver_info(solver_info);
+            solver_info["direction_sources"][name()] = m_direction_sources;
         }
+        json diagnostics() const override { return m_last_diagnostics; }
 
     private:
         LBFGSpp::BFGSMat<Scalar> m_bfgs; // Approximation to the Hessian matrix
@@ -60,5 +68,11 @@ namespace polysolve::nonlinear
 
         TVector m_prev_x;    // Previous x
         TVector m_prev_grad; // Previous gradient
+
+        /// Source and scale of the last direction, plus cumulative source
+        /// counts for distinguishing an L-BFGS history direction from either
+        /// kind of steepest-descent fallback.
+        json m_last_diagnostics = json::object();
+        std::map<std::string, int> m_direction_sources;
     };
 } // namespace polysolve::nonlinear

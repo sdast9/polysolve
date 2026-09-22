@@ -4,6 +4,8 @@
 
 #include <polysolve/Utils.hpp>
 
+#include <cmath>
+
 namespace polysolve::nonlinear
 {
     LBFGS::LBFGS(const json &solver_params,
@@ -25,6 +27,7 @@ namespace polysolve::nonlinear
 
         m_bfgs.reset(ndof, m_history_size);
         m_prev_x.resize(0);
+        m_last_diagnostics = json::object();
     }
 
     bool LBFGS::compute_update_direction(
@@ -33,10 +36,12 @@ namespace polysolve::nonlinear
         const TVector &grad,
         TVector &direction)
     {
+        std::string direction_source;
         if (m_prev_x.size() == 0)
         {
             // Use gradient descent in the first iteration or if the previous iteration failed
             direction = -grad;
+            direction_source = "steepest_descent_initial_or_reset";
         }
         else
         {
@@ -60,13 +65,24 @@ namespace polysolve::nonlinear
                 verdict = m_guard.damp(s, y, Hy);
             }
 
-            if (m_guard.store(verdict, s, y))
+            const bool stored = m_guard.store(verdict, s, y);
+            bool restarted = false;
+            if (stored)
                 m_bfgs.add_correction(s, y);
             else if (m_guard.restart_required())
+            {
                 m_bfgs.reset(x.size(), m_history_size); // nothing in it is current
+                restarted = true;
+            }
 
             // Recursive formula to compute d = -H * g
             m_bfgs.apply_Hv(grad, -Scalar(1), direction);
+            if (m_bfgs.num_corrections() > 0)
+                direction_source = stored ? "limited_memory" : "limited_memory_after_pair_skip";
+            else if (restarted)
+                direction_source = "steepest_descent_curvature_restart";
+            else
+                direction_source = "steepest_descent_identity";
 
             if (!m_guard.direction_is_usable(direction, grad))
             {
@@ -74,8 +90,22 @@ namespace polysolve::nonlinear
                 // the approximation from the safe steepest-descent direction.
                 m_bfgs.reset(x.size(), m_history_size);
                 direction = -grad;
+                direction_source = "steepest_descent_invalid_history_direction";
             }
         }
+
+        const auto finite_or_null = [](const double value) {
+            return std::isfinite(value) ? json(value) : json(nullptr);
+        };
+        const double theta = m_bfgs.theta();
+        m_last_diagnostics = {
+            {"direction_source", direction_source},
+            {"uses_steepest_descent", direction_source.rfind("steepest_descent", 0) == 0},
+            {"history_corrections", m_bfgs.num_corrections()},
+            {"hessian_initial_scale", finite_or_null(theta)},
+            {"inverse_hessian_initial_scale", finite_or_null(1. / theta)},
+            {"secant_pair", m_guard.last_pair()}};
+        ++m_direction_sources[direction_source];
 
         m_prev_x = x;
         m_prev_grad = grad;

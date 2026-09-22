@@ -112,6 +112,7 @@ namespace polysolve::nonlinear
 
         void reset_counts();
         void update_solver_info(json &solver_info) const;
+        const json &last_pair() const { return m_last_pair; }
 
     private:
         const std::string m_name;
@@ -128,5 +129,6 @@ namespace polysolve::nonlinear
         int m_damped = 0;
         std::map<std::string, int> m_skipped;
         std::map<std::string, int> m_resets;
+        json m_last_pair = nullptr;
     };
 } // namespace polysolve::nonlinear
