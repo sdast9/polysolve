@@ -1,4 +1,6 @@
 set(SOURCES
+	CurvatureGuard.cpp
+	CurvatureGuard.hpp
 	DescentStrategy.hpp
 	LBFGS.hpp
 	LBFGS.cpp

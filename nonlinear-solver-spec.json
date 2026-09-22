@@ -17,6 +17,7 @@
             "line_search",
             "allow_out_of_iterations",
             "allow_non_grad_convergence",
+            "BFGS",
             "L-BFGS",
             "L-BFGS-B",
             "Newton",
@@ -138,7 +139,11 @@
         "default": null,
         "type": "object",
         "optional": [
-            "history_size"
+            "history_size",
+            "curvature_policy",
+            "curvature_tolerance",
+            "curvature_damping",
+            "curvature_restart"
         ],
         "doc": "Options for LBFGS."
     },
@@ -147,6 +152,74 @@
         "default": 6,
         "type": "int",
         "doc": "The number of corrections to approximate the inverse Hessian matrix."
+    },
+    {
+        "pointer": "/L-BFGS/curvature_policy",
+        "default": "Skip",
+        "type": "string",
+        "options": [
+            "Skip",
+            "Damp"
+        ],
+        "doc": "What to do with a secant pair that does not carry positive curvature: Skip discards it and keeps the previous approximation, Damp stores the nearest pair that does, measured in the current approximation."
+    },
+    {
+        "pointer": "/L-BFGS/curvature_tolerance",
+        "default": 1e-08,
+        "type": "float",
+        "doc": "Relative curvature threshold: a secant pair is only stored when s.y > curvature_tolerance * |s| * |y|. Invariant under a rescaling of the objective or of the variables."
+    },
+    {
+        "pointer": "/L-BFGS/curvature_damping",
+        "default": 0.2,
+        "type": "float",
+        "doc": "Fraction of the approximation's own curvature required of a damped pair. Only used when curvature_policy is Damp."
+    },
+    {
+        "pointer": "/L-BFGS/curvature_restart",
+        "default": 1,
+        "type": "int",
+        "doc": "Number of consecutive refused secant pairs after which the approximation is discarded and the strategy restarts from steepest descent. 0 keeps a refused pair from ever discarding it."
+    },
+    {
+        "pointer": "/BFGS",
+        "default": null,
+        "type": "object",
+        "optional": [
+            "curvature_policy",
+            "curvature_tolerance",
+            "curvature_damping",
+            "curvature_restart"
+        ],
+        "doc": "Options for the dense BFGS."
+    },
+    {
+        "pointer": "/BFGS/curvature_policy",
+        "default": "Skip",
+        "type": "string",
+        "options": [
+            "Skip",
+            "Damp"
+        ],
+        "doc": "What to do with a secant pair that does not carry positive curvature: Skip discards it and keeps the previous approximation, Damp stores the nearest pair that does, measured in the current approximation."
+    },
+    {
+        "pointer": "/BFGS/curvature_tolerance",
+        "default": 1e-08,
+        "type": "float",
+        "doc": "Relative curvature threshold: a secant pair is only stored when s.y > curvature_tolerance * |s| * |y|. Invariant under a rescaling of the objective or of the variables."
+    },
+    {
+        "pointer": "/BFGS/curvature_damping",
+        "default": 0.2,
+        "type": "float",
+        "doc": "Fraction of the approximation's own curvature required of a damped pair. Only used when curvature_policy is Damp."
+    },
+    {
+        "pointer": "/BFGS/curvature_restart",
+        "default": 1,
+        "type": "int",
+        "doc": "Number of consecutive refused secant pairs after which the approximation is discarded and the strategy restarts from steepest descent. 0 keeps a refused pair from ever discarding it."
     },
     {
         "pointer": "/L-BFGS-B",
@@ -180,19 +253,19 @@
     },
     {
         "pointer": "/Newton/residual_tolerance",
-        "default": 1e-5,
+        "default": 1e-05,
         "type": "float",
         "doc": "Tolerance of the linear system residual. If residual is above, the direction is rejected."
     },
     {
         "pointer": "/Newton/reg_weight_min",
-        "default": 1e-8,
+        "default": 1e-08,
         "type": "float",
         "doc": "Minimum regulariztion weight."
     },
     {
         "pointer": "/Newton/reg_weight_max",
-        "default": 1e8,
+        "default": 100000000.0,
         "type": "float",
         "doc": "Maximum regulariztion weight."
     },
@@ -252,7 +325,7 @@
     },
     {
         "pointer": "/ADAM/epsilon",
-        "default": 1e-8,
+        "default": 1e-08,
         "type": "float",
         "doc": "Parameter epsilon for ADAM."
     },
@@ -289,7 +362,7 @@
     },
     {
         "pointer": "/StochasticADAM/epsilon",
-        "default": 1e-8,
+        "default": 1e-08,
         "type": "float",
         "doc": "Parameter epsilon for ADAM."
     },
@@ -456,7 +529,11 @@
             "type"
         ],
         "optional": [
-            "history_size"
+            "history_size",
+            "curvature_policy",
+            "curvature_tolerance",
+            "curvature_damping",
+            "curvature_restart"
         ],
         "doc": "Options for L-BFGS."
     },
@@ -467,7 +544,13 @@
         "required": [
             "type"
         ],
-        "doc": "Options for BFGS."
+        "doc": "Options for BFGS.",
+        "optional": [
+            "curvature_policy",
+            "curvature_tolerance",
+            "curvature_damping",
+            "curvature_restart"
+        ]
     },
     {
         "pointer": "/solver/*",
@@ -523,19 +606,19 @@
     },
     {
         "pointer": "/solver/*/residual_tolerance",
-        "default": 1e-5,
+        "default": 1e-05,
         "type": "float",
         "doc": "Tolerance of the linear system residual. If residual is above, the direction is rejected."
     },
     {
         "pointer": "/solver/*/reg_weight_min",
-        "default": 1e-8,
+        "default": 1e-08,
         "type": "float",
         "doc": "Minimum regulariztion weight."
     },
     {
         "pointer": "/solver/*/reg_weight_max",
-        "default": 1e8,
+        "default": 100000000.0,
         "type": "float",
         "doc": "Maximum regulariztion weight."
     },
@@ -558,6 +641,34 @@
         "doc": "The number of corrections to approximate the inverse Hessian matrix."
     },
     {
+        "pointer": "/solver/*/curvature_policy",
+        "default": "Skip",
+        "type": "string",
+        "options": [
+            "Skip",
+            "Damp"
+        ],
+        "doc": "What to do with a secant pair that does not carry positive curvature: Skip discards it and keeps the previous approximation, Damp stores the nearest pair that does, measured in the current approximation."
+    },
+    {
+        "pointer": "/solver/*/curvature_tolerance",
+        "default": 1e-08,
+        "type": "float",
+        "doc": "Relative curvature threshold: a secant pair is only stored when s.y > curvature_tolerance * |s| * |y|. Invariant under a rescaling of the objective or of the variables."
+    },
+    {
+        "pointer": "/solver/*/curvature_damping",
+        "default": 0.2,
+        "type": "float",
+        "doc": "Fraction of the approximation's own curvature required of a damped pair. Only used when curvature_policy is Damp."
+    },
+    {
+        "pointer": "/solver/*/curvature_restart",
+        "default": 1,
+        "type": "int",
+        "doc": "Number of consecutive refused secant pairs after which the approximation is discarded and the strategy restarts from steepest descent. 0 keeps a refused pair from ever discarding it."
+    },
+    {
         "pointer": "/solver/*/alpha",
         "default": 0.001,
         "type": "float",
@@ -577,7 +688,7 @@
     },
     {
         "pointer": "/solver/*/epsilon",
-        "default": 1e-8,
+        "default": 1e-08,
         "type": "float",
         "doc": "Parameter epsilon for ADAM."
     },
@@ -614,7 +725,7 @@
     },
     {
         "pointer": "/line_search/use_grad_norm_tol",
-        "default": 1e-6,
+        "default": 1e-06,
         "type": "float",
         "doc": "When the energy is smaller than use_grad_norm_tol, line-search uses norm of gradient instead of energy"
     },
@@ -666,7 +777,7 @@
     },
     {
         "pointer": "/line_search/Armijo/c",
-        "default": 1e-4,
+        "default": 0.0001,
         "type": "float",
         "min_value": 0,
         "doc": "Armijo c parameter."
@@ -786,7 +897,7 @@
     },
     {
         "pointer": "/advanced/gradient_fd_eps",
-        "default": 1e-7,
+        "default": 1e-07,
         "type": "float",
         "doc": "Expensive Option: Eps for finite difference to verify gradient of energy."
     }

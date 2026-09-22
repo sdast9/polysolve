@@ -11,7 +11,8 @@ namespace polysolve::nonlinear
                  spdlog::logger &logger)
         : Superclass(solver_params,
                      characteristic_length,
-                     logger)
+                     logger),
+          m_guard(name(), SecantForm::INVERSE, solver_params, logger)
     {
         m_history_size = extract_param("L-BFGS", "history_size", solver_params);
         if (m_history_size <= 0)
@@ -44,15 +45,41 @@ namespace polysolve::nonlinear
             // y_{i+1} = g_{i+1} - g_i
             assert(m_prev_x.size() == x.size());
             assert(m_prev_grad.size() == grad.size());
-            m_bfgs.add_correction(x - m_prev_x, grad - m_prev_grad);
+            TVector s = x - m_prev_x;
+            TVector y = grad - m_prev_grad;
+
+            // The approximation is only positive definite while every stored
+            // pair has positive curvature with a representable scale, which an
+            // energy-decreasing step does not establish.
+            PairVerdict verdict = m_guard.classify(s, y);
+            if (verdict == PairVerdict::INSUFFICIENT_CURVATURE
+                && m_guard.policy() == CurvaturePolicy::DAMP)
+            {
+                TVector Hy;
+                m_bfgs.apply_Hv(y, Scalar(1), Hy);
+                verdict = m_guard.damp(s, y, Hy);
+            }
+
+            if (m_guard.store(verdict, s, y))
+                m_bfgs.add_correction(s, y);
+            else if (m_guard.restart_required())
+                m_bfgs.reset(x.size(), m_history_size); // nothing in it is current
 
             // Recursive formula to compute d = -H * g
             m_bfgs.apply_Hv(grad, -Scalar(1), direction);
+
+            if (!m_guard.direction_is_usable(direction, grad))
+            {
+                // Keeping a poisoned history would repeat the failure; restart
+                // the approximation from the safe steepest-descent direction.
+                m_bfgs.reset(x.size(), m_history_size);
+                direction = -grad;
+            }
         }
 
         m_prev_x = x;
         m_prev_grad = grad;
 
-        return true;
+        return direction.allFinite();
     }
 } // namespace polysolve::nonlinear

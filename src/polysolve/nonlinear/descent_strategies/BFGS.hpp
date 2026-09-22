@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "CurvatureGuard.hpp"
 #include "DescentStrategy.hpp"
 #include <polysolve/Utils.hpp>
 
@@ -31,11 +32,20 @@ namespace polysolve::nonlinear
             const TVector &grad,
             TVector &direction) override;
 
+        void reset_times() override { m_guard.reset_counts(); }
+        void update_solver_info(json &solver_info, const double per_iteration) override
+        {
+            m_guard.update_solver_info(solver_info);
+        }
+
     private:
         TVector m_prev_x;    // Previous x
         TVector m_prev_grad; // Previous gradient
 
         Eigen::MatrixXd hess;
+
+        /// Validates the secant pairs before they reach the approximation
+        CurvatureGuard m_guard;
 
         void reset_history(const int ndof);
 

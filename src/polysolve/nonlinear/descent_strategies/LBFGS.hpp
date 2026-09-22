@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "CurvatureGuard.hpp"
 #include "DescentStrategy.hpp"
 #include <polysolve/Utils.hpp>
 
@@ -29,8 +30,17 @@ namespace polysolve::nonlinear
             const TVector &grad,
             TVector &direction) override;
 
+        void reset_times() override { m_guard.reset_counts(); }
+        void update_solver_info(json &solver_info, const double per_iteration) override
+        {
+            m_guard.update_solver_info(solver_info);
+        }
+
     private:
         LBFGSpp::BFGSMat<Scalar> m_bfgs; // Approximation to the Hessian matrix
+
+        /// Validates the secant pairs before they reach the history
+        CurvatureGuard m_guard;
 
         /// The number of corrections to approximate the inverse Hessian matrix.
         /// The L-BFGS routine stores the computation results of previous \ref m
