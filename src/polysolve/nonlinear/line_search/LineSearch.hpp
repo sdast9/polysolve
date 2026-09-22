@@ -46,8 +46,8 @@ namespace polysolve::nonlinear::line_search
 
         virtual std::string name() const = 0;
 
-        void update_solver_info(json &solver_info, const double per_iteration);
-        void reset_times();
+        virtual void update_solver_info(json &solver_info, const double per_iteration);
+        virtual void reset_times();
         void log_times() const;
 
         void set_is_final_strategy(const bool val)
@@ -66,6 +66,11 @@ namespace polysolve::nonlinear::line_search
         }
 
         int iterations() const { return cur_iter; }
+
+        /// Whether the solver's current direction may be followed beyond
+        /// alpha = 1 (see Solver::direction_admits_growth). Only a search that
+        /// grows the step reads it.
+        void set_growth_permitted(const bool val) { growth_permitted = val; }
 
         /// Observational details of the most recent search. Step sizes are
         /// absolute multipliers of the strategy direction; the feasible value
@@ -104,6 +109,15 @@ namespace polysolve::nonlinear::line_search
         spdlog::logger &m_logger;
         double step_ratio;
         int cur_iter;
+
+        bool growth_permitted = true;
+
+        /// The step the search starts from before any cap applies. A starting
+        /// step below it was shortened by the finite-energy or feasibility cap.
+        double initial_step_size() const { return default_init_step_size; }
+
+        /// Lets a search add its own record to diagnostics().
+        json &mutable_diagnostics() { return m_last_diagnostics; }
 
     private:
         /// @brief Compute step size that avoids nan/infinite energy

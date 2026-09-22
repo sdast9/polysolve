@@ -85,6 +85,16 @@ namespace polysolve::nonlinear
         /// @param x1 Ending point.
         virtual void line_search_begin(const TVector &x0, const TVector &x1) {}
 
+        /// @brief Callback for a line search that lengthens its interval.
+        ///
+        /// A search that grows the step beyond x1 of line_search_begin calls
+        /// this with the longer interval [x0, x1], which replaces the previous
+        /// one, before pricing it with max_step_size. It is the same line search
+        /// and ends with one line_search_end. By default it is line_search_begin.
+        /// @param x0 Starting point.
+        /// @param x1 Ending point of the longer interval.
+        virtual void line_search_extend(const TVector &x0, const TVector &x1) { line_search_begin(x0, x1); }
+
         /// @brief Callback function for the end of a line search.
         virtual void line_search_end() {}
 

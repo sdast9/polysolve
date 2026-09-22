@@ -122,6 +122,14 @@ namespace polysolve::nonlinear
             return m_strategies[m_descent_strategy]->compute_update_direction(objFunc, x, grad, direction);
         }
 
+        /// @brief Whether a step longer than the direction itself can be admissible.
+        ///
+        /// A line search that grows the step (alpha > 1) relies on the problem's
+        /// feasibility callbacks to bound it. A solver whose directions end at a
+        /// boundary the problem does not report -- a box bound built into the
+        /// direction -- must say so here.
+        virtual bool direction_admits_growth() const { return true; }
+
         void reset_stopping_criteria(Problem &objFunc, NormType norm_type)
         {
             m_stop_rescaled.reset();

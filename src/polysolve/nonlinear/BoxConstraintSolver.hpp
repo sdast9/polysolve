@@ -51,6 +51,10 @@ namespace polysolve::nonlinear
             const TVector &grad,
             TVector &direction) override;
 
+        /// The boxed directions end at the projected bound, which the problem's
+        /// feasibility callbacks know nothing about.
+        bool direction_admits_growth() const override { return false; }
+
     private:
         Eigen::MatrixXd bounds_;
         std::vector<std::shared_ptr<BoxedDescentStrategy>> m_strategies;

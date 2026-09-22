@@ -5,6 +5,7 @@
 #include "ResidualBacktracking.hpp"
 #include "RobustArmijo.hpp"
 #include "NoLineSearch.hpp"
+#include "Wolfe.hpp"
 
 #include <polysolve/Utils.hpp>
 
@@ -41,6 +42,10 @@ namespace polysolve::nonlinear::line_search
         {
             return std::make_shared<ResidualBacktracking>(params, logger);
         }
+        else if (name == "Wolfe")
+        {
+            return std::make_shared<Wolfe>(params, logger);
+        }
         else if (name == "None")
         {
             return std::make_shared<NoLineSearch>(params, logger);
@@ -54,7 +59,7 @@ namespace polysolve::nonlinear::line_search
 
     std::vector<std::string> LineSearch::available_methods()
     {
-        return {{"Armijo", "RobustArmijo", "Backtracking", "ResidualBacktracking", "None"}};
+        return {{"Armijo", "RobustArmijo", "Backtracking", "ResidualBacktracking", "Wolfe", "None"}};
     }
 
     LineSearch::LineSearch(const json &params, spdlog::logger &logger)
@@ -177,6 +182,11 @@ namespace polysolve::nonlinear::line_search
             if (std::isnan(step_size))
             {
                 // Superclass::save_sampled_values("failed-line-search-values.csv", x, delta_x, objFunc);
+                // Leave the problem where the search found it, as the
+                // exhausted-budget path below does: the trials may have moved
+                // its state, and the swept interval is over.
+                objFunc.solution_changed(x);
+                objFunc.line_search_end();
                 m_last_diagnostics["failure_stage"] = "descent_search";
                 m_last_diagnostics["iterations"] = cur_iter;
                 return NaN;

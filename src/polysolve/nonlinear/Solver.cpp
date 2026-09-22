@@ -534,6 +534,7 @@ namespace polysolve::nonlinear
             double rate;
             {
                 POLYSOLVE_SCOPED_STOPWATCH("line search", line_search_time, m_logger);
+                m_line_search->set_growth_permitted(direction_admits_growth());
                 rate = m_line_search->line_search(x, delta_x, objFunc);
             }
             m_current.alpha = rate;

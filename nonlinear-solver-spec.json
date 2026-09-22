@@ -706,7 +706,8 @@
             "default_init_step_size",
             "step_ratio",
             "Armijo",
-            "RobustArmijo"
+            "RobustArmijo",
+            "Wolfe"
         ],
         "doc": "Settings for line-search in the nonlinear solver"
     },
@@ -719,6 +720,7 @@
             "RobustArmijo",
             "Backtracking",
             "ResidualBacktracking",
+            "Wolfe",
             "None"
         ],
         "doc": "Line-search type"
@@ -804,6 +806,63 @@
         "type": "float",
         "min_value": 0,
         "doc": "Relative tolerance on E to switch to approximate."
+    },
+    {
+        "pointer": "/line_search/Wolfe",
+        "default": null,
+        "type": "object",
+        "optional": [
+            "c2",
+            "growth_factor",
+            "growth_limit",
+            "max_evaluations",
+            "max_objective_restarts",
+            "approximate_wolfe_epsilon"
+        ],
+        "doc": "Options for the strong Wolfe line search (bracket and zoom). It uses Armijo/c for sufficient decrease, and RobustArmijo (with the Armijo and RobustArmijo options) as its fallback when no trial meets the Armijo decrease."
+    },
+    {
+        "pointer": "/line_search/Wolfe/c2",
+        "default": 0.9,
+        "type": "float",
+        "min": 0,
+        "max": 1,
+        "doc": "Strong Wolfe curvature parameter: |f'(alpha)| <= c2 |f'(0)| along the direction. Must satisfy Armijo/c < c2 < 1."
+    },
+    {
+        "pointer": "/line_search/Wolfe/growth_factor",
+        "default": 2.0,
+        "type": "float",
+        "min": 1,
+        "doc": "Factor by which the step grows beyond the direction while the slope is still steeper than c2 allows. Must exceed 1."
+    },
+    {
+        "pointer": "/line_search/Wolfe/growth_limit",
+        "default": 16.0,
+        "type": "float",
+        "min": 0,
+        "doc": "Largest step (a multiple of the direction) growth may reach. Every growth first has the problem rebuild and price the longer interval (line_search_extend, max_step_size); a value at or below the initial step size disables growth."
+    },
+    {
+        "pointer": "/line_search/Wolfe/max_evaluations",
+        "default": 20,
+        "type": "int",
+        "min": 1,
+        "doc": "Energy evaluations the bracket-and-zoom may spend, further bounded by max_step_size_iter; when it runs out the best Armijo point is accepted, or RobustArmijo decides if there is none."
+    },
+    {
+        "pointer": "/line_search/Wolfe/max_objective_restarts",
+        "default": 2,
+        "type": "int",
+        "min": 0,
+        "doc": "Times the search restarts from the current iterate when the problem reports an objective change during it; beyond that the search fails."
+    },
+    {
+        "pointer": "/line_search/Wolfe/approximate_wolfe_epsilon",
+        "default": 1e-06,
+        "type": "float",
+        "min": 0,
+        "doc": "A trial whose energy is within this fraction of |f(x)| of f(x) (or within the Armijo roundoff bound) is judged on its slope alone: accepted on the strong curvature condition, otherwise placed by the sign of its slope (Hager and Zhang's approximate Wolfe conditions; 1e-6 is their default). 0 leaves only the roundoff bound."
     },
     {
         "pointer": "/box_constraints",
