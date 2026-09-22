@@ -42,6 +42,17 @@ namespace polysolve::nonlinear
         }
         else
         {
+            TVector y = grad - m_prev_grad;
+            TVector s = x - m_prev_x;
+
+            double y_s = y.dot(s);
+            TVector Bs = hess * s;
+            double sBs = s.transpose() * Bs;
+
+            // Incorporate the latest accepted displacement before computing
+            // the direction at x; otherwise the Hessian is one update stale.
+            hess += (y * y.transpose()) / y_s - (Bs * Bs.transpose()) / sBs;
+
             try
             {
                 linear_solver->analyze_pattern_dense(hess, hess.rows());
@@ -53,15 +64,6 @@ namespace polysolve::nonlinear
                 m_logger.debug("Unable to factorize Hessian: \"{}\";", err.what());
                 return false;
             }
-
-            TVector y = grad - m_prev_grad;
-            TVector s = x - m_prev_x;
-
-            double y_s = y.dot(s);
-            TVector Bs = hess * s;
-            double sBs = s.transpose() * Bs;
-
-            hess += (y * y.transpose()) / y_s - (Bs * Bs.transpose()) / sBs;
         }
 
         m_prev_x = x;
