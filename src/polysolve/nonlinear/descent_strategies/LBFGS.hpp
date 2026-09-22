@@ -30,6 +30,14 @@ namespace polysolve::nonlinear
             const TVector &grad,
             TVector &direction) override;
 
+        /// The stored iterate and gradient were taken from the objective
+        /// that has just been superseded, so no pair may be formed across it.
+        void objective_changed(const int ndof) override
+        {
+            m_guard.note_reset(ResetReason::OBJECTIVE_CHANGED);
+            reset(ndof);
+        }
+
         void reset_times() override { m_guard.reset_counts(); }
         void update_solver_info(json &solver_info, const double per_iteration) override
         {

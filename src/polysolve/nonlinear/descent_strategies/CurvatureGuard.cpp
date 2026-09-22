@@ -59,6 +59,8 @@ namespace polysolve::nonlinear
             return "factorization_failed";
         case ResetReason::UNSUPPORTED_HISTORY:
             return "unsupported_history";
+        case ResetReason::OBJECTIVE_CHANGED:
+            return "objective_changed";
         default:
             return "unknown";
         }

@@ -147,6 +147,10 @@ namespace polysolve::nonlinear
         /// @brief Index into m_strategies
         int m_descent_strategy;
 
+        /// @brief Objective generations the problem went through in this
+        ///        minimization, reported in the solver info
+        int m_objective_changes = 0;
+
         /// @brief Logger to use
         spdlog::logger &m_logger;
 

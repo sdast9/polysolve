@@ -13,10 +13,10 @@ namespace polysolve::nonlinear
         using TVector = Problem::TVector;
         using Scalar = Problem::Scalar;
 
-        /// @brief Constructor 
+        /// @brief Constructor
         /// @param solver_params_ JSON of solver parameters
-        /// @param characteristic_length 
-        /// @param logger 
+        /// @param characteristic_length
+        /// @param logger
         DescentStrategy(const json &solver_params_,
                         const double characteristic_length,
                         spdlog::logger &logger)
@@ -28,6 +28,13 @@ namespace polysolve::nonlinear
 
         virtual void reset(const int ndof) {}
         virtual void reset_times() {}
+
+        /// @brief Discard whatever the strategy holds from a superseded objective
+        ///
+        /// Called when the problem reports a different objective generation
+        /// than the one the strategy's stored iterate and gradient belong to.
+        /// A strategy that keeps no such history does nothing.
+        virtual void objective_changed(const int ndof) {}
 
         /// @brief Update solver info after finding descent direction
         /// @param solver_info JSON of solver parameters

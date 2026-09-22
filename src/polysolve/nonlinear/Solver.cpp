@@ -288,9 +288,36 @@ namespace polysolve::nonlinear
         double initial_grad_norm;
         double initial_delta_x_norm;
 
+        // The objective the iterates so far belong to. A problem that retunes
+        // itself mid-solve reports a new generation, and everything measured
+        // against the old one has to go before it is used again.
+        uint64_t objective_generation = objFunc.objective_generation();
+
         do
         {
             m_line_search->set_is_final_strategy(m_descent_strategy == m_strategies.size() - 1);
+
+            // --- Objective version -------------------------------------------
+
+            if (objFunc.objective_generation() != objective_generation)
+            {
+                objective_generation = objFunc.objective_generation();
+                ++m_objective_changes;
+
+                // A secant pair formed across the change subtracts gradients
+                // of two different functions, which is not a secant of either
+                // and can carry any curvature at all.
+                for (auto &s : m_strategies)
+                    s->objective_changed(x.size());
+
+                // The previous energy belongs to the superseded objective, so
+                // the change in the objective value is not defined here.
+                old_energy = NaN;
+
+                m_logger.debug(
+                    "[{}][{}] the objective changed (generation {}); superseded history discarded",
+                    descent_strategy_name(), m_line_search->name(), objective_generation);
+            }
 
             // --- Energy ------------------------------------------------------
 
@@ -578,6 +605,7 @@ namespace polysolve::nonlinear
         m_current.reset();
         m_descent_strategy = 0;
         m_status = Status::NotStarted;
+        m_objective_changes = 0;
 
         const std::string line_search_name = solver_info["line_search"];
         solver_info = json();
@@ -609,6 +637,7 @@ namespace polysolve::nonlinear
         solver_info["status"] = status();
         solver_info["energy"] = energy;
         solver_info["iterations"] = m_current.iterations;
+        solver_info["objective_changes"] = m_objective_changes;
         solver_info["xDelta"] = m_current.xDelta;
         solver_info["fDelta"] = m_current.fDelta;
         solver_info["gradNorm"] = m_current.gradNorm;

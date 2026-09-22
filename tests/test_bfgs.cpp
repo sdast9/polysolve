@@ -5,6 +5,8 @@
 #include <catch2/catch.hpp>
 #include <spdlog/sinks/null_sink.h>
 
+#include <algorithm>
+
 using namespace polysolve;
 using namespace polysolve::nonlinear;
 
@@ -502,5 +504,241 @@ TEST_CASE("bfgs-damping-stores-a-positive-curvature-pair", "[solver][bfgs][curva
         const Eigen::VectorXd grad = scalar(0.199);
         CHECK(direction[0] * grad[0] < 0);
         CHECK(direction[0] != Approx(-grad[0]));
+    }
+}
+
+// ===========================================================================
+// Objective generation
+//
+// A quasi-Newton pair is a secant of one function. A problem that retunes
+// itself during a minimization -- a contact barrier stiffness or trim that
+// moves in post_step -- makes the next pair subtract gradients of two
+// different functions, which is a secant of neither and can carry any
+// curvature at all (audit finding 2). The problem reports a new objective
+// generation; the solver then discards the history before a pair is formed.
+// ===========================================================================
+
+namespace
+{
+    /// A quadratic whose curvature and minimizer change once, mid-solve, in
+    /// post_step, the way a contact retune changes a barrier. `reports` off
+    /// is the behavior before this signal existed: the change happens and
+    /// nothing is told about it.
+    class RetunedQuadratic : public Problem
+    {
+    public:
+        RetunedQuadratic(const bool reports, const int retune_after)
+            : reports(reports), retune_after(retune_after) {}
+
+        double curvature() const { return retuned ? 4. : 0.25; }
+        TVector minimizer(const int size) const
+        {
+            TVector m = TVector::Zero(size);
+            if (retuned)
+                m[0] = 0.5;
+            return m;
+        }
+
+        double value(const TVector &x) override
+        {
+            return 0.5 * curvature() * (x - minimizer(int(x.size()))).squaredNorm();
+        }
+        void gradient(const TVector &x, TVector &grad) override
+        {
+            grad = curvature() * (x - minimizer(int(x.size())));
+        }
+        void hessian(const TVector &x, THessian &hess) override
+        {
+            hess.resize(x.size(), x.size());
+            hess.setIdentity();
+            hess *= curvature();
+        }
+
+        void post_step(const PostStepData &data) override
+        {
+            if (retuned || data.iter_num != retune_after)
+                return;
+            retuned = true;
+            ++generation; // the objective is a different function from here
+        }
+
+        uint64_t objective_generation() const override { return reports ? generation : 0; }
+
+        /// Rebuilding a cache for the same function is not a change.
+        void solution_changed(const TVector &) override { ++cache_rebuilds; }
+
+        const bool reports;
+        const int retune_after;
+        bool retuned = false;
+        uint64_t generation = 0;
+        int cache_rebuilds = 0;
+    };
+
+    /// Iterations recorded from the solver's own callback.
+    struct Step
+    {
+        size_t iteration;
+        double grad_norm;
+        double x_delta_dot_grad;
+    };
+
+    /// -H*g with an empty history is exactly the steepest descent direction,
+    /// whose slope is -|g|^2. That is the visible signature of a strategy
+    /// that holds nothing.
+    bool is_steepest_descent(const Step &step)
+    {
+        return std::abs(step.x_delta_dot_grad + step.grad_norm * step.grad_norm)
+               <= 1e-12 * step.grad_norm * step.grad_norm;
+    }
+
+} // namespace
+
+TEST_CASE("bfgs-discards-history-when-the-objective-changes", "[solver][bfgs][objective]")
+{
+    spdlog::logger logger("bfgs-objective", std::make_shared<spdlog::sinks::null_sink_mt>());
+
+    for (const std::string &type : {"L-BFGS", "BFGS"})
+    {
+        for (const bool reports : {true, false})
+        {
+            CAPTURE(type, reports);
+            json params = pure_strategy(type, json::object());
+            params["grad_norm_tol"] = 1e-12;
+            auto solver = Solver::create(params, {{"solver", "Eigen::LDLT"}}, 1, logger);
+
+            std::vector<Step> steps;
+            solver->set_iteration_callback([&steps](const Criteria &c) {
+                steps.push_back({c.iterations, c.gradNorm, c.xDeltaDotGrad});
+                return false;
+            });
+
+            RetunedQuadratic problem(reports, /*retune_after=*/1);
+            Eigen::VectorXd x = Eigen::VectorXd::Ones(2);
+            REQUIRE_NOTHROW(solver->minimize(problem, x));
+            REQUIRE(problem.retuned);
+            CHECK((x - problem.minimizer(2)).norm() < 1e-12);
+
+            const json info = solver->info();
+            const json report = info["curvature_guard"][type];
+            const int steepest = int(std::count_if(steps.begin(), steps.end(), is_steepest_descent));
+            if (reports)
+            {
+                // The solver was told, so the pair that would have spanned
+                // the change was never formed: the first direction after it
+                // is the steepest descent one, as at the start of the solve.
+                CHECK(info["objective_changes"] == 1);
+                CHECK(report["resets"]["objective_changed"] == 1);
+                CHECK(steepest == 2);
+            }
+            else
+            {
+                // Without the signal the change is invisible and only the
+                // stage 1 safeguard stands between the spanning pair and the
+                // approximation -- and only when its curvature is invalid.
+                CHECK(info["objective_changes"] == 0);
+                CHECK(report["resets"].find("objective_changed") == report["resets"].end());
+                CHECK(steepest == 1);
+            }
+        }
+    }
+}
+
+TEST_CASE("bfgs-keeps-history-when-only-the-iterate-moves", "[solver][bfgs][objective]")
+{
+    spdlog::logger logger("bfgs-objective-control", std::make_shared<spdlog::sinks::null_sink_mt>());
+
+    // The control of the test above: the same problem, never retuned. The
+    // solver rebuilds the problem's caches at every trial point and must not
+    // discard anything for it.
+    for (const std::string &type : {"L-BFGS", "BFGS"})
+    {
+        CAPTURE(type);
+        json params = pure_strategy(type, json::object());
+        params["grad_norm_tol"] = 1e-12;
+        auto solver = Solver::create(params, {{"solver", "Eigen::LDLT"}}, 1, logger);
+
+        RetunedQuadratic problem(true, /*retune_after=*/-1);
+        Eigen::VectorXd x = Eigen::VectorXd::Ones(2);
+        REQUIRE_NOTHROW(solver->minimize(problem, x));
+        REQUIRE_FALSE(problem.retuned);
+        CHECK(problem.cache_rebuilds > 0);
+
+        const json info = solver->info();
+        CHECK(info["objective_changes"] == 0);
+        CHECK(info["curvature_guard"][type]["history_resets"] == 0);
+        CHECK(info["curvature_guard"][type]["skipped_pairs"] == 0);
+    }
+}
+
+TEST_CASE("bfgs-objective-change-discards-the-stored-iterate", "[solver][bfgs][objective]")
+{
+    spdlog::logger logger("bfgs-objective-direct", std::make_shared<spdlog::sinks::null_sink_mt>());
+
+    // The audit's reproduction, stated on the strategies themselves: an
+    // accepted step of f=x^2/8 from x=1 to x=0.75, then f=2x^2. The pair
+    // (s=-0.25, y=2.75) has s.y=-0.6875 and is a secant of neither function.
+    for (const auto &[name, strategy] : both_strategies(json::object(), logger))
+    {
+        CAPTURE(name);
+        UnusedProblem problem;
+        strategy->reset(1);
+        strategy->reset_times();
+
+        Eigen::VectorXd direction;
+        REQUIRE(strategy->compute_update_direction(problem, scalar(1.), scalar(0.25), direction));
+
+        strategy->objective_changed(1);
+
+        direction = Eigen::VectorXd::Zero(1);
+        const Eigen::VectorXd grad = scalar(3.);
+        REQUIRE(strategy->compute_update_direction(problem, scalar(0.75), grad, direction));
+
+        CHECK(identical(direction, -grad));
+        const json report = guard_report(*strategy, name);
+        CHECK(report["accepted_pairs"] == 0);
+        CHECK(report["skipped_pairs"] == 0); // no pair was even formed
+        CHECK(report["history_resets"] == 1);
+        CHECK(report["resets"]["objective_changed"] == 1);
+    }
+}
+
+TEST_CASE("bfgs-curvature-alone-cannot-see-an-objective-change", "[solver][bfgs][objective]")
+{
+    spdlog::logger logger("bfgs-objective-positive", std::make_shared<spdlog::sinks::null_sink_mt>());
+
+    // What stage 2 adds to stage 1. A pair that spans a change can carry
+    // perfectly good curvature: the gradient at x=1 under f=x^2/2 is 1, the
+    // gradient at x=0.75 under f=1.2*x^2/2 is 0.9, and the pair
+    // (s=-0.25, y=-0.1) has s.y=0.025>0 and apparent curvature 0.4, which is
+    // the curvature of neither function. The tests of stage 1 accept it; only
+    // the reported change prevents it from being formed at all.
+    for (const bool told : {false, true})
+    {
+        for (const auto &[name, strategy] : both_strategies(json::object(), logger))
+        {
+            CAPTURE(name, told);
+            UnusedProblem problem;
+            strategy->reset(1);
+            strategy->reset_times();
+
+            Eigen::VectorXd direction;
+            REQUIRE(strategy->compute_update_direction(problem, scalar(1.), scalar(1.), direction));
+
+            if (told)
+                strategy->objective_changed(1);
+
+            direction = Eigen::VectorXd::Zero(1);
+            const Eigen::VectorXd grad = scalar(0.9); // 1.2 * 0.75
+            REQUIRE(strategy->compute_update_direction(problem, scalar(0.75), grad, direction));
+
+            const json report = guard_report(*strategy, name);
+            CHECK(report["accepted_pairs"] == (told ? 0 : 1));
+            CHECK(report["skipped_pairs"] == 0);
+            CHECK(report["resets"].count("objective_changed") == (told ? 1u : 0u));
+            if (told)
+                CHECK(identical(direction, -grad));
+            else
+                CHECK_FALSE(identical(direction, -grad));
+        }
     }
 }

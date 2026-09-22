@@ -100,6 +100,22 @@ namespace polysolve::nonlinear
         /// @param new_x New solution.
         virtual void solution_changed(const TVector &new_x) {}
 
+        /// @brief Which version of the objective this problem currently evaluates.
+        ///
+        /// A quasi-Newton strategy builds its approximation from gradients at
+        /// two iterates, which is a secant of one function only. A problem
+        /// that can change its objective during a single minimization -- a
+        /// contact barrier retune, a quadrature refinement -- must report a
+        /// different value here once it has, so that the history spanning the
+        /// change is discarded before the next pair is formed.
+        ///
+        /// The value must change when the mathematical objective changes, and
+        /// only then: not because the coordinates moved, and not because an
+        /// internal cache (an active collision list, an assembly) was rebuilt
+        /// for the same function. A problem with a fixed objective keeps the
+        /// default and costs one comparison per iteration.
+        virtual uint64_t objective_generation() const { return 0; }
+
         virtual bool after_line_search_custom_operation(const TVector &x0, const TVector &x1) { return false; }
 
         /// @brief Callback function used to determine if the solver should stop.

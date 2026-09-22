@@ -44,7 +44,8 @@ namespace polysolve::nonlinear
         NON_FINITE_DIRECTION,  ///< the approximation produced a non-finite direction
         NON_DESCENT_DIRECTION, ///< the approximation produced an ascent direction
         FACTORIZATION_FAILED,  ///< the approximation could not be factorized
-        UNSUPPORTED_HISTORY    ///< too many consecutive pairs carried no usable curvature
+        UNSUPPORTED_HISTORY,   ///< too many consecutive pairs carried no usable curvature
+        OBJECTIVE_CHANGED      ///< the problem is no longer minimizing the same function
     };
 
     std::string message(const PairVerdict verdict);
