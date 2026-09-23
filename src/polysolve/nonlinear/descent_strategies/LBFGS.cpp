@@ -44,6 +44,7 @@ namespace polysolve::nonlinear
             log_and_throw_error(logger, "L-BFGS preconditioner must be None, Diagonal or Hessian, instead got {}", kind);
         m_precond_refresh = opts.value("preconditioner_refresh", 0);
         m_refresh_short_step = opts.value("preconditioner_refresh_short_step", 0.0);
+        m_clear_pairs_on_refresh = opts.value("preconditioner_clear_pairs", false);
         if (m_preconditioner == Preconditioner::HESSIAN)
         {
             m_linear_solver = polysolve::linear::Solver::create(linear_solver_params, logger);
@@ -178,6 +179,13 @@ namespace polysolve::nonlinear
             if (short_step && m_precond_valid)
                 ++m_short_step_refreshes;
             refresh_preconditioner(objFunc, x);
+            if (m_clear_pairs_on_refresh)
+            {
+                // the fresh Hessian holds this curvature exactly; the pair
+                // spanning the previous step is not formed either
+                m_pairs.clear();
+                m_prev_x.resize(0);
+            }
         }
         ++m_iters_since_refresh;
 

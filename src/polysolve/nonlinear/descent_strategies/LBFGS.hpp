@@ -85,6 +85,7 @@ namespace polysolve::nonlinear
         /// fraction of its direction (truncated or backtracked); 0 = off
         double m_refresh_short_step = 0;
         double m_prev_direction_norm = -1;
+        bool m_clear_pairs_on_refresh = false;
         int m_short_step_refreshes = 0;
         int m_iters_since_refresh = 0;
         bool m_precond_valid = false;
