@@ -18,7 +18,11 @@ namespace polysolve::nonlinear
           m_guard(name(), SecantForm::INVERSE, solver_params, logger)
     {
         m_history_size = extract_param("L-BFGS", "history_size", solver_params);
-        if (m_history_size <= 0)
+        // EXPERIMENT (qn-contact): with a preconditioner, history_size 0 is the
+        // lagged-Hessian (modified Newton) control without secant corrections.
+        const bool preconditioned = solver_params.contains("L-BFGS")
+                                    && solver_params["L-BFGS"].value("preconditioner", std::string("None")) != "None";
+        if (m_history_size < (preconditioned ? 0 : 1))
             log_and_throw_error(logger, "L-BFGS history_size must be >=1, instead got {}", m_history_size);
     }
 
