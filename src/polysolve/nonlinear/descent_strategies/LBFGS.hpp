@@ -8,7 +8,11 @@
 
 #include <LBFGSpp/BFGSMat.h>
 
+#include <polysolve/linear/Solver.hpp>
+
+#include <deque>
 #include <map>
+#include <memory>
 
 namespace polysolve::nonlinear
 {
@@ -18,6 +22,13 @@ namespace polysolve::nonlinear
         using Superclass = DescentStrategy;
 
         LBFGS(const json &solver_params,
+              const double characteristic_length,
+              spdlog::logger &logger);
+
+        /// EXPERIMENT (qn-contact): with linear solver settings, so that the
+        /// opt-in "Hessian" preconditioner can factorize a lagged Hessian.
+        LBFGS(const json &solver_params,
+              const json &linear_solver_params,
               const double characteristic_length,
               spdlog::logger &logger);
 
@@ -49,10 +60,47 @@ namespace polysolve::nonlinear
         {
             m_guard.update_solver_info(solver_info);
             solver_info["direction_sources"][name()] = m_direction_sources;
+            if (m_preconditioner != Preconditioner::NONE)
+                solver_info["lbfgs_preconditioner"] = {
+                    {"kind", preconditioner_name()},
+                    {"refreshes", m_precond_refreshes},
+                    {"factorization_failures", m_precond_failures},
+                    {"assembly_seconds", m_precond_assembly_time},
+                    {"factorization_seconds", m_precond_factor_time},
+                    {"apply_seconds", m_precond_apply_time}};
         }
         json diagnostics() const override { return m_last_diagnostics; }
 
     private:
+        // ---- EXPERIMENT (qn-contact): preconditioned two-loop recursion ----
+        enum class Preconditioner
+        {
+            NONE,     ///< the unchanged LBFGSpp path, scalar initial matrix
+            DIAGONAL, ///< H0 = diag(projected Hessian)^-1, lagged
+            HESSIAN   ///< H0 = (projected Hessian)^-1, factorized, lagged
+        };
+        Preconditioner m_preconditioner = Preconditioner::NONE;
+        int m_precond_refresh = 0; ///< iterations between refreshes; 0 = on reset only
+        int m_iters_since_refresh = 0;
+        bool m_precond_valid = false;
+        TVector m_diag_inv;
+        std::unique_ptr<polysolve::linear::Solver> m_linear_solver;
+        std::deque<std::pair<TVector, TVector>> m_pairs; ///< (s, y), oldest first
+        int m_precond_refreshes = 0;
+        int m_precond_failures = 0;
+        double m_precond_assembly_time = 0;
+        double m_precond_factor_time = 0;
+        double m_precond_apply_time = 0;
+
+        std::string preconditioner_name() const;
+        void refresh_preconditioner(Problem &objFunc, const TVector &x);
+        void apply_initial(const TVector &q, TVector &r);
+        /// out = H * v with the two-loop recursion over m_pairs
+        void apply_inverse_hessian(const TVector &v, TVector &out);
+        bool compute_preconditioned_direction(
+            Problem &objFunc, const TVector &x, const TVector &grad, TVector &direction);
+        // ---------------------------------------------------------------------
+
         LBFGSpp::BFGSMat<Scalar> m_bfgs; // Approximation to the Hessian matrix
 
         /// Validates the secant pairs before they reach the history

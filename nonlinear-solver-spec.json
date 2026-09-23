@@ -143,9 +143,28 @@
             "curvature_policy",
             "curvature_tolerance",
             "curvature_damping",
-            "curvature_restart"
+            "curvature_restart",
+            "preconditioner",
+            "preconditioner_refresh"
         ],
         "doc": "Options for LBFGS."
+    },
+    {
+        "pointer": "/L-BFGS/preconditioner",
+        "default": "None",
+        "type": "string",
+        "options": [
+            "None",
+            "Diagonal",
+            "Hessian"
+        ],
+        "doc": "EXPERIMENT (qn-contact): initial inverse-Hessian of the two-loop recursion. None keeps the scalar LBFGSpp scaling; Diagonal and Hessian use the diagonal or a factorization of the PSD-projected Hessian, lagged."
+    },
+    {
+        "pointer": "/L-BFGS/preconditioner_refresh",
+        "default": 0,
+        "type": "int",
+        "doc": "EXPERIMENT (qn-contact): iterations between preconditioner refreshes; 0 refreshes only when the history is reset (every minimize call and objective change)."
     },
     {
         "pointer": "/L-BFGS/history_size",

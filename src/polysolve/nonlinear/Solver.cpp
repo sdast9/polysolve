@@ -84,7 +84,7 @@ namespace polysolve::nonlinear
 
             else if (solver_name == "LBFGS" || solver_name == "L-BFGS")
             {
-                return std::make_shared<LBFGS>(solver_params, characteristic_length, logger);
+                return std::make_shared<LBFGS>(solver_params, linear_solver_params, characteristic_length, logger);
             }
 
             else if (solver_name == "StochasticGradientDescent" || solver_name == "stochastic_gradient_descent")
