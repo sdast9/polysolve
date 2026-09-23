@@ -12,6 +12,10 @@ namespace polysolve::nonlinear
     public:
         using Superclass = DescentStrategy;
 
+        /// Every Newton variant (projected, regularized, dense) solves with
+        /// the Hessian or a positive-definite modification of it.
+        bool direction_solves_with_hessian() const override { return true; }
+
         static std::vector<std::shared_ptr<DescentStrategy>> create_solver(
             const bool sparse,
             const json &solver_params,

@@ -834,3 +834,76 @@ TEST_CASE("bfgs-iteration-diagnostics-distinguish-gradient-descent-escalation", 
     CHECK(info["strategy_transition_counts"]["L-BFGS->GradientDescent:line_search_failed"] == 1);
     CHECK(info["direction_sources"]["L-BFGS"]["limited_memory"] == 1);
 }
+
+TEST_CASE("slope-tolerance-stops-only-hessian-directions", "[solver][bfgs][stopping]")
+{
+    spdlog::logger logger("slope-tolerance", std::make_shared<spdlog::sinks::null_sink_mt>());
+
+    // An anisotropic fixed quadratic. After its first secant, L-BFGS scales
+    // its direction by the stiff curvature (~1e-6), so |g.d| ~ 1e-6 while the
+    // soft coordinate is still ~1 from the minimizer: the slope tolerance
+    // below would stop it there. That tolerance is a Newton-decrement test
+    // and must only end a solve whose direction solves with the Hessian.
+    class Anisotropic : public Problem
+    {
+    public:
+        double value(const TVector &x) override { return .5 * (1e6 * x[0] * x[0] + x[1] * x[1]); }
+        void gradient(const TVector &x, TVector &grad) override
+        {
+            grad.resize(2);
+            grad << 1e6 * x[0], x[1];
+        }
+        void hessian(const TVector &, THessian &hess) override
+        {
+            hess.resize(2, 2);
+            hess.setZero();
+            hess.coeffRef(0, 0) = 1e6;
+            hess.coeffRef(1, 1) = 1;
+        }
+    };
+
+    SECTION("a limited-memory direction runs on to the gradient criterion")
+    {
+        for (const bool pure : {true, false})
+        {
+            CAPTURE(pure);
+            json params = pure_strategy("L-BFGS", json::object());
+            if (!pure)
+                params["solver"] = "L-BFGS"; // public form: L-BFGS, then GradientDescent
+            params["advanced"]["derivative_along_delta_x_tol"] = 1e-4;
+            params["x_delta_tol"] = 1e-3;
+            params["allow_non_grad_convergence"] = true;
+            auto solver = Solver::create(params, {{"solver", "Eigen::LDLT"}}, 1, logger);
+
+            Anisotropic problem;
+            Eigen::VectorXd x(2);
+            x << 1, 1;
+            REQUIRE_NOTHROW(solver->minimize(problem, x));
+            CHECK(solver->status() == Status::GradNormTolerance);
+            CHECK(x.norm() < 1e-9);
+            CHECK_FALSE(solver->direction_solves_with_hessian());
+            CHECK(solver->info()["active_strategy_solves_with_hessian"] == false);
+        }
+    }
+
+    SECTION("Newton keeps its decrement test")
+    {
+        json params = {
+            {"solver", "Newton"},
+            {"grad_norm_tol", 1e-10},
+            {"rel_grad_norm_tol", 0},
+            {"max_iterations", 500},
+            {"line_search", {{"method", "Armijo"}}},
+            {"advanced", {{"derivative_along_delta_x_tol", 1e7}}}};
+        auto solver = Solver::create(params, {{"solver", "Eigen::SimplicialLDLT"}}, 1, logger);
+
+        Anisotropic problem;
+        Eigen::VectorXd x(2);
+        x << 1, 1;
+        REQUIRE_NOTHROW(solver->minimize(problem, x));
+        // |g.d| = g'H^-1 g = 1e6 + 1 < 1e7: stopped before the first step
+        CHECK(solver->status() == Status::NotDescentDirection);
+        CHECK(solver->current_criteria().iterations == 0);
+        CHECK(solver->direction_solves_with_hessian());
+    }
+}

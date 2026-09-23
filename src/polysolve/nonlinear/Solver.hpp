@@ -77,6 +77,15 @@ namespace polysolve::nonlinear
         const Criteria &current_criteria() const { return m_current; }
         Status status() const { return m_status; }
 
+        /// @brief Whether the strategy active at the last iteration solves with the Hessian
+        ///
+        /// See DescentStrategy::direction_solves_with_hessian: the
+        /// direction-based stopping criteria apply only when this is true.
+        bool direction_solves_with_hessian() const
+        {
+            return !m_strategies.empty() && m_strategies[m_descent_strategy]->direction_solves_with_hessian();
+        }
+
         void set_strategies_iterations(const json &solver_params);
         void set_line_search(const json &params);
         const json &info() const { return solver_info; }
@@ -129,6 +138,13 @@ namespace polysolve::nonlinear
         /// boundary the problem does not report -- a box bound built into the
         /// direction -- must say so here.
         virtual bool direction_admits_growth() const { return true; }
+
+        /// @brief Whether the direction-based stopping criteria (the slope
+        /// tolerance, x_delta_tol, rel_x_delta_tol) may end the solve now
+        ///
+        /// Only while a strategy that solves with the Hessian is active (see
+        /// DescentStrategy::direction_solves_with_hessian).
+        virtual bool direction_based_stops_allowed() const { return direction_solves_with_hessian(); }
 
         void reset_stopping_criteria(Problem &objFunc, NormType norm_type)
         {

@@ -54,6 +54,9 @@ namespace polysolve::nonlinear
         /// The boxed directions end at the projected bound, which the problem's
         /// feasibility callbacks know nothing about.
         bool direction_admits_growth() const override { return false; }
+        /// A projected step's length is a stationarity measure for the
+        /// box-constrained methods; their criteria are unchanged.
+        bool direction_based_stops_allowed() const override { return true; }
 
     private:
         Eigen::MatrixXd bounds_;

@@ -51,6 +51,17 @@ namespace polysolve::nonlinear
         virtual json diagnostics() const { return json::object(); }
 
         virtual bool is_direction_descent() { return true; }
+
+        /// @brief Whether the direction solves with the problem's Hessian
+        ///
+        /// Only then is the slope g.Δx (minus) the squared Newton decrement
+        /// and the length of Δx a Newton step, so only then may the solver
+        /// stop on the direction-based criteria: the slope tolerance
+        /// (advanced/derivative_along_delta_x_tol), x_delta_tol and
+        /// rel_x_delta_tol. Any other direction's slope and length describe
+        /// its own scaling: a limited-memory direction scaled by the stiffest
+        /// curvature meets the slope tolerance far from any minimizer.
+        virtual bool direction_solves_with_hessian() const { return false; }
         virtual bool handle_error() { return false; }
 
         /// @brief Compute descent direction along which to do line search

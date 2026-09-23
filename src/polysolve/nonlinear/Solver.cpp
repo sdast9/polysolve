@@ -536,7 +536,23 @@ namespace polysolve::nonlinear
 
             // --- Check convergence -------------------------------------------
 
-            m_status = checkConvergence(m_stop_rescaled, m_current);
+            // The slope and the length of the direction measure the distance
+            // to the minimizer only for a direction that solves with the
+            // Hessian (a Newton decrement and a Newton step). For any other
+            // strategy -- including a fallback reached from Newton -- they
+            // measure the strategy's own scaling, so those criteria wait
+            // until a Hessian-based strategy is active again. (The
+            // box-constrained solver keeps its criteria.)
+            if (direction_based_stops_allowed())
+                m_status = checkConvergence(m_stop_rescaled, m_current);
+            else
+            {
+                Criteria stop = m_stop_rescaled;
+                stop.xDeltaDotGrad = 0;
+                stop.xDelta = 0;
+                stop.relXDelta = 0;
+                m_status = checkConvergence(stop, m_current);
+            }
 
             if (m_status != Status::Continue)
                 break;
@@ -795,6 +811,7 @@ namespace polysolve::nonlinear
         solver_info["objective_changes"] = m_objective_changes;
         solver_info["active_strategy"] = descent_strategy_name();
         solver_info["active_strategy_index"] = m_descent_strategy;
+        solver_info["active_strategy_solves_with_hessian"] = direction_solves_with_hessian();
         solver_info["strategy_transition_counts"] = m_strategy_transition_counts;
         if (m_iteration_diagnostics_enabled)
         {
