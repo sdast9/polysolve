@@ -81,6 +81,11 @@ namespace polysolve::nonlinear
         };
         Preconditioner m_preconditioner = Preconditioner::NONE;
         int m_precond_refresh = 0; ///< iterations between refreshes; 0 = on reset only
+        /// refresh when the previous accepted step was shorter than this
+        /// fraction of its direction (truncated or backtracked); 0 = off
+        double m_refresh_short_step = 0;
+        double m_prev_direction_norm = -1;
+        int m_short_step_refreshes = 0;
         int m_iters_since_refresh = 0;
         bool m_precond_valid = false;
         TVector m_diag_inv;

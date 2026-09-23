@@ -43,6 +43,7 @@ namespace polysolve::nonlinear
         else
             log_and_throw_error(logger, "L-BFGS preconditioner must be None, Diagonal or Hessian, instead got {}", kind);
         m_precond_refresh = opts.value("preconditioner_refresh", 0);
+        m_refresh_short_step = opts.value("preconditioner_refresh_short_step", 0.0);
         if (m_preconditioner == Preconditioner::HESSIAN)
         {
             m_linear_solver = polysolve::linear::Solver::create(linear_solver_params, logger);
@@ -60,6 +61,7 @@ namespace polysolve::nonlinear
         m_last_diagnostics = json::object();
         m_pairs.clear();
         m_precond_valid = false;
+        m_prev_direction_norm = -1;
     }
 
     std::string LBFGS::preconditioner_name() const
@@ -167,8 +169,16 @@ namespace polysolve::nonlinear
         TVector &direction)
     {
         std::string direction_source;
-        if (!m_precond_valid || (m_precond_refresh > 0 && m_iters_since_refresh >= m_precond_refresh))
+        bool short_step = false;
+        if (m_refresh_short_step > 0 && m_prev_x.size() == x.size() && m_prev_direction_norm > 0)
+            short_step = (x - m_prev_x).norm() < m_refresh_short_step * m_prev_direction_norm;
+        if (!m_precond_valid || (m_precond_refresh > 0 && m_iters_since_refresh >= m_precond_refresh)
+            || (short_step && m_iters_since_refresh > 0))
+        {
+            if (short_step && m_precond_valid)
+                ++m_short_step_refreshes;
             refresh_preconditioner(objFunc, x);
+        }
         ++m_iters_since_refresh;
 
         bool stored = false;
@@ -222,11 +232,13 @@ namespace polysolve::nonlinear
             {"inverse_hessian_initial_scale", nullptr},
             {"preconditioner", preconditioner_name()},
             {"preconditioner_refreshes", m_precond_refreshes},
+            {"short_step_refreshes", m_short_step_refreshes},
             {"secant_pair", m_guard.last_pair()}};
         ++m_direction_sources[direction_source];
 
         m_prev_x = x;
         m_prev_grad = grad;
+        m_prev_direction_norm = direction.norm();
         return direction.allFinite();
     }
 

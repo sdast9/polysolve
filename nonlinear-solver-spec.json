@@ -145,7 +145,8 @@
             "curvature_damping",
             "curvature_restart",
             "preconditioner",
-            "preconditioner_refresh"
+            "preconditioner_refresh",
+            "preconditioner_refresh_short_step"
         ],
         "doc": "Options for LBFGS."
     },
@@ -165,6 +166,12 @@
         "default": 0,
         "type": "int",
         "doc": "EXPERIMENT (qn-contact): iterations between preconditioner refreshes; 0 refreshes only when the history is reset (every minimize call and objective change)."
+    },
+    {
+        "pointer": "/L-BFGS/preconditioner_refresh_short_step",
+        "default": 0,
+        "type": "float",
+        "doc": "EXPERIMENT (qn-contact): also refresh when the previous accepted step was shorter than this fraction of its direction (truncated by CCD/the trial cap or backtracked); 0 disables."
     },
     {
         "pointer": "/L-BFGS/history_size",
