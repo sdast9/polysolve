@@ -21,6 +21,9 @@ target_link_libraries(unit_tests PUBLIC Catch2::Catch2)
 
 target_link_libraries(unit_tests PUBLIC polysolve::polysolve)
 
+# Direct BFGS/L-BFGS strategy tests include their LBFGSpp implementation headers.
+target_link_libraries(unit_tests PRIVATE LBFGSpp::LBFGSpp)
+
 include(polysolve_warnings)
 target_link_libraries(unit_tests PRIVATE polysolve::warnings)
 
@@ -46,3 +49,9 @@ endforeach()
 # Register tests
 set(PARSE_CATCH_TESTS_ADD_TO_CONFIGURE_DEPENDS ON)
 catch_discover_tests(unit_tests)
+
+# Standalone SPMD driver. Every rank enters the
+# solve, which is how the hybrid solver is meant to be driven -- the Catch2
+# binary drives it from rank 0 only, so it cannot time the multi-rank path.
+add_executable(bench_spmd bench_spmd.cpp)
+target_link_libraries(bench_spmd PUBLIC polysolve::polysolve)

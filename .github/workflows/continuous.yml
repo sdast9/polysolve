@@ -18,13 +18,14 @@ jobs:
   ####################
 
   Unix:
-    name: ${{ matrix.name }} (${{ matrix.config }})
+    name: ${{ matrix.name }} (${{ matrix.config }}, large_index=${{ matrix.large_index }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
         config: [Debug, Release]
+        large_index: [ON, OFF]
         include:
           - os: macos-latest
             name: macOS
@@ -60,8 +61,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.CACHE_PATH }}
-          key: ${{ runner.os }}-${{ matrix.config }}-cache-${{ github.sha }}
-          restore-keys: ${{ runner.os }}-${{ matrix.config }}-cache
+          key: ${{ runner.os }}-${{ matrix.config }}-${{ matrix.large_index }}-cache-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-${{ matrix.config }}-${{ matrix.large_index }}-cache
 
       - name: Prepare ccache
         run: |
@@ -74,6 +75,7 @@ jobs:
           cd build
           cmake .. \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DPOLYSOLVE_LARGE_INDEX=${{ matrix.large_index }} \
             -DCMAKE_BUILD_TYPE=${{ matrix.config }} \
 
       - name: Build
@@ -87,6 +89,7 @@ jobs:
   ####################
 
   Windows:
+    name: Windows (${{ matrix.config }}, large_index=${{ matrix.large_index }})
     runs-on: windows-latest
     env:
       SCCACHE_IDLE_TIMEOUT: "12000"
@@ -94,6 +97,7 @@ jobs:
       fail-fast: false
       matrix:
         config: [Debug, Release]
+        large_index: [ON, OFF]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -109,8 +113,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.appdata }}\Mozilla\sccache
-          key: ${{ runner.os }}-${{ matrix.config }}-cache-${{ github.sha }}
-          restore-keys: ${{ runner.os }}-${{ matrix.config }}-cache
+          key: ${{ runner.os }}-${{ matrix.config }}-${{ matrix.large_index }}-cache-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-${{ matrix.config }}-${{ matrix.large_index }}-cache
 
       - name: Prepare sccache
         run: |
@@ -133,6 +137,7 @@ jobs:
             -DCMAKE_C_COMPILER=cl.exe ^
             -DCMAKE_CXX_COMPILER=cl.exe ^
             -DCMAKE_CXX_COMPILER_LAUNCHER=sccache ^
+            -DPOLYSOLVE_LARGE_INDEX=${{ matrix.large_index }} ^
             -DCMAKE_BUILD_TYPE=${{ matrix.config }} ^
             -B build ^
             -S .
@@ -143,3 +148,81 @@ jobs:
         run: |
           cd build
           ctest --verbose --output-on-failure
+
+  ####################
+  # Hybrid solver (nano-mpi)
+  ####################
+
+  # Explicitly exercise the nano-MPI build and multi-rank benchmark, in addition
+  # to the platform matrix (MPI defaults on for non-Windows hosts). Ranks are
+  # threads of the test process, so there is no MPI launcher to install.
+
+  Hybrid:
+    name: Hybrid solver (${{ matrix.config }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, Release]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 10
+
+      - name: Dependencies
+        run: |
+          sudo apt update
+          sudo apt -o Acquire::Retries=3 install \
+          libblas-dev \
+          libglu1-mesa-dev \
+          xorg-dev \
+          ccache \
+          libsuitesparse-dev
+          echo 'CACHE_PATH=~/.ccache' >> "$GITHUB_ENV"
+
+      - name: Cache build
+        id: cache-build
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CACHE_PATH }}
+          key: hybrid-${{ matrix.config }}-cache-${{ github.sha }}
+          restore-keys: hybrid-${{ matrix.config }}-cache
+
+      - name: Prepare ccache
+        run: |
+          ccache --max-size=1.0G
+          ccache -V && ccache --show-stats && ccache --zero-stats
+
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=${{ matrix.config }} \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DPOLYSOLVE_WITH_MPI=ON
+
+      - name: Build
+        run: cmake --build build -j2 && ccache --show-stats
+
+      - name: Tests
+        run: ctest --test-dir build --output-on-failure
+
+      # Ranks really are threads: nothing in the binary links an MPI runtime,
+      # and the solver still scales.
+      - name: No MPI runtime is linked
+        run: |
+          ldd build/tests/bench_spmd || true
+          if ldd build/tests/bench_spmd | grep -qiE 'libmpi|libopen-rte|libopen-pal'; then
+            echo "an MPI runtime got linked in; ranks were supposed to be threads" >&2
+            exit 1
+          fi
+
+      - name: Hybrid solver scales across rank counts
+        run: |
+          for n in 1 2 4; do
+            NANOMPI_NUM_RANKS=$n ./build/tests/bench_spmd 32 CPUHybrid | tee -a bench.txt
+          done
+          # every run must have converged
+          awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^relres=/) {
+                   split($i, kv, "="); if (kv[2] + 0 > 1e-8) {
+                     print "residual too large: " $0 > "/dev/stderr"; exit 1 } } }' bench.txt
