@@ -29,6 +29,12 @@ namespace polysolve::nonlinear::line_search
             const TVector &delta_x,
             const TVector &old_grad) {}
 
+        /// @brief Whether the direction prepared by init_compute_descent_step_size
+        /// can be searched. A search that needs a descent slope (Armijo and the
+        /// searches built on it) refuses an uphill or non-finite one, and the
+        /// search then fails like one that exhausted its budget.
+        virtual bool admits_direction() const { return true; }
+
         virtual bool criteria(
             const TVector &delta_x,
             Problem &objFunc,

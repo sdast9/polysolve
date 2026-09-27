@@ -1002,6 +1002,73 @@ TEST_CASE("line-search-small-gradient-keeps-energy-bound", "[solver][line_search
     }
 }
 
+// An uphill direction (ADAM makes no descent promise, so the solver hands its
+// directions to the line search unscreened) fails the search instead of
+// tripping Armijo's descent assertion in Debug builds or running the whole
+// backtracking budget in Release. Wolfe reaches the same path through its
+// RobustArmijo fallback.
+TEST_CASE("line-search-refuses-uphill-direction", "[solver][line_search]")
+{
+    using TVector = Problem::TVector;
+    static auto logger = spdlog::stdout_color_mt("uphill-direction-test");
+    logger->set_level(spdlog::level::warn);
+    const std::string method = GENERATE("Armijo", "RobustArmijo", "Wolfe");
+    const double c = GENERATE(1e-4, 0.);
+    CAPTURE(method, c);
+    json p = {{"line_search",
+               {{"method", method},
+                {"min_step_size", 1e-10},
+                {"max_step_size_iter", 30},
+                {"min_step_size_final", 1e-20},
+                {"max_step_size_iter_final", 100},
+                {"default_init_step_size", 1.},
+                {"step_ratio", .5},
+                {"Armijo", {{"c", c}, {"roundoff_tolerance", std::numeric_limits<double>::epsilon()}}},
+                {"RobustArmijo", {{"delta_relative_tolerance", .1}}},
+                {"Wolfe", {{"c2", .9}, {"growth_factor", 2.}, {"growth_limit", 16.}, {"max_evaluations", 20}, {"max_objective_restarts", 2}, {"approximate_wolfe_epsilon", 1e-6}}}}}};
+    auto ls = line_search::LineSearch::create(p, *logger);
+    ls->set_is_final_strategy(true);
+    ls->use_grad_norm_tol = 0;
+
+    class Counting : public FlooredQuadratic
+    {
+    public:
+        Counting() : FlooredQuadratic(1, 0) {}
+        double value(const TVector &x) override
+        {
+            ++evaluations;
+            return FlooredQuadratic::value(x);
+        }
+        int evaluations = 0;
+    } f;
+
+    const TVector x = TVector::Constant(2, 1.);
+    TVector g;
+    f.gradient(x, g);
+
+    SECTION("uphill")
+    {
+        const TVector step = g; // slope g.g > 0
+        const double alpha = ls->line_search(x, step, f);
+        CHECK(std::isnan(alpha));
+        CHECK(ls->diagnostics()["failure_stage"] == "descent_search");
+        REQUIRE(ls->diagnostics().contains("rejected_direction"));
+        CHECK(ls->diagnostics()["rejected_direction"]["reason"] == "ascent");
+        CHECK(ls->diagnostics()["rejected_direction"]["slope"].get<double>() == Approx(g.squaredNorm()));
+        // The initial energy and the finite-energy probe only: no step
+        // along the direction is tried (the final budget allows 100).
+        CHECK(f.evaluations <= 3);
+    }
+
+    SECTION("descent is still searched")
+    {
+        const TVector step = -g;
+        const double alpha = ls->line_search(x, step, f);
+        CHECK(alpha == Approx(1.));
+        CHECK_FALSE(ls->diagnostics().contains("rejected_direction"));
+    }
+}
+
 // ===========================================================================
 // Deterministic quasi-Newton regressions (BFGS audit stage 5)
 //

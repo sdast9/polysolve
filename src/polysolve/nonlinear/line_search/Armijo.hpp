@@ -20,6 +20,13 @@ namespace polysolve::nonlinear::line_search
             const TVector &delta_x,
             const TVector &old_grad) override;
 
+        /// @brief Only a finite, non-positive slope has a sufficient-decrease
+        /// step; an uphill or non-finite one fails the search (it used to
+        /// trip an assertion in Debug builds and run the full backtracking
+        /// budget in Release).
+        /// (The slope itself is tested: c may be 0.)
+        bool admits_direction() const override { return descent_slope <= 0; }
+
         virtual bool criteria(
             const TVector &delta_x,
             Problem &objFunc,
@@ -51,7 +58,8 @@ namespace polysolve::nonlinear::line_search
             const TVector &new_x) const;
 
         double c;
-        double armijo_criteria;    ///< cached value: c * delta_x.dot(old_grad)
+        double descent_slope = 0;  ///< cached value: delta_x.dot(old_grad)
+        double armijo_criteria;    ///< cached value: c * descent_slope
         double roundoff_tolerance; ///< ε in the energy-change bound; 0 permits only flagged equal-energy fallback
     };
 } // namespace polysolve::nonlinear::line_search

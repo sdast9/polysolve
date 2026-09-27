@@ -4,6 +4,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <limits>
+
 namespace polysolve::nonlinear::line_search
 {
 
@@ -24,6 +26,23 @@ namespace polysolve::nonlinear::line_search
         double step_size = starting_step_size;
 
         init_compute_descent_step_size(delta_x, old_grad);
+
+        // A strategy may hand over a direction that is not one of descent
+        // (ADAM makes no descent promise, so the solver does not screen its
+        // directions). No step along it satisfies a sufficient-decrease
+        // condition, and trying each step size only spends evaluations and
+        // risks the roundoff fallback accepting an uphill step: fail the
+        // search and let the solver's strategy fallback take over.
+        if (!admits_direction())
+        {
+            const double slope = delta_x.dot(old_grad);
+            m_logger.log(final_strategy() ? spdlog::level::warn : spdlog::level::debug,
+                         "[{}] Line search refused a direction with slope {}={:g} (not a descent direction)",
+                         name(), log::delta("x") + log::dot() + "g", slope);
+            mutable_diagnostics()["rejected_direction"] = {{"reason", std::isfinite(slope) ? "ascent" : "nonfinite_slope"},
+                                                           {"slope", std::isfinite(slope) ? json(slope) : json(nullptr)}};
+            return std::numeric_limits<double>::quiet_NaN();
+        }
 
         for (; step_size > current_min_step_size() && cur_iter < current_max_step_size_iter(); step_size *= step_ratio, ++cur_iter)
         {

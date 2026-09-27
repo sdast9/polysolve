@@ -20,8 +20,9 @@ namespace polysolve::nonlinear::line_search
         const TVector &delta_x,
         const TVector &old_grad)
     {
-        armijo_criteria = c * delta_x.dot(old_grad);
-        assert(armijo_criteria <= 0);
+        // Checked by admits_direction(): false for an uphill or NaN slope.
+        descent_slope = delta_x.dot(old_grad);
+        armijo_criteria = c * descent_slope;
     }
 
     bool Armijo::criteria(

@@ -118,6 +118,7 @@ namespace polysolve::nonlinear::line_search
 
         /// Lets a search add its own record to diagnostics().
         json &mutable_diagnostics() { return m_last_diagnostics; }
+        bool final_strategy() const { return is_final_strategy; }
 
     private:
         /// @brief Compute step size that avoids nan/infinite energy
