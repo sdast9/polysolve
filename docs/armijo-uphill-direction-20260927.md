@@ -54,7 +54,10 @@ Hypre, AMGCL, Spectra, MPI off):
 The committed `Backtracking.cpp` differs from the tested build only by
 clang-format whitespace. PolyFEM's Newton-family directions are screened by the
 solver before the line search, so its scenes do not reach this path (the five
-public smokes log no refused direction). Native Linux/Windows Debug results come
-from CI on the pushed commit.
+public smokes log no refused direction). CI run
+[36359256152](https://github.com/sdast9/polysolve/actions/runs/36359256152) on
+`6a8c2cc9`: all 14 jobs pass — Linux, macOS and Windows, Debug and Release,
+both index widths, and Hybrid Debug/Release (the seven Debug jobs failed on
+`6099b9cd`).
 
 Evidence: parent workspace `outputs/band-statistic/20260927/polysolve/`.
